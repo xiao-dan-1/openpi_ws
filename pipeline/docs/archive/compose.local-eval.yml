@@ -1,0 +1,61 @@
+# Historical deployment recipe; see ../REFACTOR.md and the active WSL Compose.
+name: openpi-local-999
+x-mounts: &mounts
+  - ${OPENPI_LOCAL_ROOT:-/home/xiaodan/openpi_ws}/openpi:/workspace/openpi:ro
+  - ${OPENPI_LOCAL_ROOT:-/home/xiaodan/openpi_ws}/pipeline:/workspace/pipeline:ro
+  - ${OPENPI_LOCAL_ROOT:-/home/xiaodan/openpi_ws}/datasets:/workspace/datasets:ro
+  - ${OPENPI_LOCAL_ROOT:-/home/xiaodan/openpi_ws}/openpi_cache:/workspace/openpi_cache:ro
+  - ${LOCAL_CHECKPOINT:-/mnt/c/Users/xiaodan/Downloads/frp-lab.com/202610241653/999}:/workspace/checkpoints/pi05_libero/libero_lora_01/${LOCAL_STEP:-999}:ro
+  - ${LOCAL_CHECKPOINT:-/mnt/c/Users/xiaodan/Downloads/frp-lab.com/202610241653/999}/assets/libero:/workspace/assets/pi05_libero/libero:ro
+  - ${LOCAL_OUTPUT:-/mnt/d/home/06_projects/openpi_ws/checks/output/local_docker_eval_999}/runs:/workspace/runs
+  - ${LOCAL_OUTPUT:-/mnt/d/home/06_projects/openpi_ws/checks/output/local_docker_eval_999}/checks:/workspace/checks
+  - ${LOCAL_OUTPUT:-/mnt/d/home/06_projects/openpi_ws/checks/output/local_docker_eval_999}/cache:/workspace/.cache
+x-environment: &environment
+  PYTHONPATH: /workspace/openpi/src:/workspace/openpi/packages/openpi-client/src:/workspace/openpi/third_party/libero
+  PYTHONDONTWRITEBYTECODE: "1"
+  HF_HUB_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+  OMP_NUM_THREADS: "2"
+  OPENBLAS_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+  NO_PROXY: localhost,127.0.0.1
+  no_proxy: localhost,127.0.0.1
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: safe.directory
+  GIT_CONFIG_VALUE_0: /workspace/openpi
+services:
+  policy:
+    image: openpi_server:latest
+    init: true
+    network_mode: host
+    working_dir: /workspace
+    entrypoint: ["/.venv/bin/python", "-u", "-m", "pipeline.inference.local_docker_serve"]
+    command: ["--gpu", "0", "--port", "8100", "--step", "${LOCAL_STEP:-999}", "--memory-fraction", "0.70", "--restore-concurrent-gb", "3"]
+    environment: *environment
+    volumes: *mounts
+    mem_limit: 8g
+    memswap_limit: 14g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  simulator:
+    image: libero:latest
+    init: true
+    profiles: [eval]
+    network_mode: host
+    working_dir: /workspace
+    entrypoint: ["/.venv/bin/python", "-u", "-m", "pipeline.eval.eval_libero"]
+    command: ["--exp-name", "libero_lora_01", "--step", "${LOCAL_STEP:-999}", "--port", "8100", "--suite", "libero_spatial", "--trials", "1", "--seed", "7"]
+    environment:
+      <<: *environment
+      CUDA_VISIBLE_DEVICES: ""
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+      NVIDIA_VISIBLE_DEVICES: void
+    volumes: *mounts
+    mem_limit: 3g
+    memswap_limit: 5g

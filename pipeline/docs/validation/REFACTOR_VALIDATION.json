@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-27",
+  "timezone": "Asia/Shanghai",
+  "status": "PASS",
+  "scope": "Package restructuring, CLI imports, workspace resolution, CPU regression tests, and container entrypoints; no new model training or policy-quality evaluation",
+  "windows": {
+    "workspace": "D:/home/06_projects/openpi_ws",
+    "command": "python -B -m unittest tests.test_pipeline_entrypoints tests.test_batch_benchmark -v",
+    "tests_run": 11,
+    "passed": 10,
+    "skipped": 1,
+    "skip_reason": "POSIX process-group cleanup is tested under WSL"
+  },
+  "wsl": {
+    "distribution": "Ubuntu-24.04",
+    "workspace": "/home/xiaodan/openpi_ws",
+    "command": "openpi/.venv/bin/python -B -m unittest discover -s tests -v",
+    "tests_run": 13,
+    "passed": 13,
+    "skipped": 0,
+    "includes": [
+      "Nine module CLIs show help with site packages disabled",
+      "Workspace resolution from an unrelated current directory",
+      "Shared experiment-name validation and invalid CLI arguments",
+      "Batch plan arguments and isolated worker module invocation",
+      "Busy GPU rejection, OOM stop, worker failure detection, and POSIX child cleanup using test doubles",
+      "Tiny real CPU TrainState JIT updates and reproduction of the previous ArgInfo lowering failure"
+    ]
+  },
+  "additional_checks": {
+    "python_3_8_syntax": "PASS",
+    "environment_setup_bash_syntax": "PASS",
+    "environment_setup_help": "PASS",
+    "active_compose_configuration": "PASS",
+    "active_policy_container_module_help": "PASS",
+    "libero_container_evaluator_module_help": "PASS",
+    "historical_validation_json_byte_preservation": "PASS",
+    "windows_wsl_pipeline_and_tests_file_hash_equality": "PASS"
+  },
+  "active_wsl_deployment": {
+    "compose": "/home/xiaodan/openpi_ws/openpi/examples/libero/compose.yml",
+    "policy_entrypoint": ["/.venv/bin/python", "-u", "-m", "pipeline.inference.local_docker_serve"],
+    "working_directory": "/workspace",
+    "viewer_documentation_updated": true,
+    "existing_services_restarted": false,
+    "checkpoint_selection_modified": false
+  },
+  "backup_locations": {
+    "windows": "C:/Users/xiaodan/AppData/Local/Temp/openpi-pipeline-refactor-n2jtt4e_",
+    "wsl": "/tmp/openpi-pipeline-refactor-6di0uzdo"
+  },
+  "limits": [
+    "No remote server files were modified; server launch commands must migrate to the new module entrypoints when deployed",
+    "No full dataset statistics, GPU model loading, training, or task-success evaluation was rerun",
+    "Archive documents retain their historical command bodies; deleted local-eval-6999.env was not recreated"
+  ]
+}

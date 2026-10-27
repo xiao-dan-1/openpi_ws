@@ -1,0 +1,2 @@
+# Python 3.8 build environments need a compatible setuptools for old source packages.
+setuptools<75.4

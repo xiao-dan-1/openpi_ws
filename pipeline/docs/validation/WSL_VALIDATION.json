@@ -1,0 +1,118 @@
+{
+  "platform": "WSL Ubuntu-24.04",
+  "python": "3.11.16",
+  "upstream_commit": "215abfb217dbac7d5f1273282331b9b1866c0479",
+  "official_statistics_probe": {
+    "status": "PASS",
+    "frames": 128,
+    "batch_size": 32,
+    "workers": 0,
+    "entry": "scripts/compute_norm_stats.py:main",
+    "norm_stats_sha256": "8973abb9765b5d00e91ac840d0bd09bd6306994cd7da8ca3df4609ce6e778e27",
+    "active_training_stats": false
+  },
+  "actual_lora_dataloader": {
+    "status": "PASS",
+    "backend": "cpu",
+    "batches": 2,
+    "batch_size": 1,
+    "probe_stats_only": true,
+    "state_shape": [
+      1,
+      32
+    ],
+    "actions_shape": [
+      1,
+      10,
+      32
+    ],
+    "tokens_shape": [
+      1,
+      200
+    ],
+    "legacy_wsl_repo_root_disabled": true
+  },
+  "train_cli_help": "PASS",
+  "invalid_gpu_argument_guard": "PASS",
+  "not_tested": [
+    "Full official statistics",
+    "GPU weight loading",
+    "24GB GPU memory fit",
+    "Forward/backward training",
+    "Checkpoint save and restore",
+    "Policy serving and LIBERO evaluation"
+  ],
+  "spawned_workers_episode0": {
+    "status": "PASS",
+    "workers_compared": [
+      0,
+      2
+    ],
+    "frames_per_run": 128,
+    "batches_per_run": 4,
+    "statistics_exactly_equal": true,
+    "fields": [
+      "mean",
+      "std",
+      "q01",
+      "q99"
+    ],
+    "keys": [
+      "state",
+      "actions"
+    ],
+    "test_script": "checks/check_stats_workers.py"
+  },
+  "spawned_workers_full_dataset": {
+    "status": "INCOMPLETE",
+    "reason": "WSL exited unexpectedly with no Python traceback; cause not established",
+    "server_test_required": true
+  },
+  "policy_transport_mock": {
+    "status": "PASS",
+    "real_observations_checked": 3,
+    "wrong_checkpoint_rejected": true,
+    "policy": "MOCK echo-state policy",
+    "protocol": "Official WebSocket server and client",
+    "test_script": "checks/check_policy_transport.py",
+    "real_model_inference_tested": false
+  },
+  "inference_eval_launchers": {
+    "python38_grammar": "PASS",
+    "cli_help": "PASS",
+    "shell_syntax": "PASS",
+    "actual_checkpoint_inference": "PENDING_SERVER",
+    "libero_install_and_simulation": "PENDING_SERVER"
+  },
+  "batch_benchmark": {
+    "syntax_and_cli": "PASS",
+    "plan_mode": "PASS",
+    "invalid_measurement_length_rejected": true,
+    "mock_orchestration_tests_passed": 4,
+    "gpu_model_and_capacity_test": "PENDING_SERVER",
+    "test_script": "checks/test_batch_benchmark.py",
+    "real_trainstate_cpu_regression": {
+      "tests_passed": 2,
+      "old_arginfo_failure_reproduced": true,
+      "normal_jit_optimizer_updates": 5,
+      "loss_decreased": true,
+      "actual_pi05_gpu_test": "PENDING_SERVER",
+      "test_script": "checks/test_trainstate_jit.py"
+    },
+    "benchmark_version": 3,
+    "orchestration_tests_passed": 6,
+    "training_workers_cpu": {
+      "status": "PASS",
+      "workers": [
+        0,
+        2
+      ],
+      "batch_size": 16,
+      "batches_per_run": 2,
+      "inputs_exactly_equal": true,
+      "episode": 0,
+      "probe_statistics_only": true,
+      "full_dataset_gpu_test": "PENDING_SERVER"
+    }
+  }
+}

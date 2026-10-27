@@ -1,0 +1,25 @@
+# 大体积数据与权重缓存：只存在于 WSL，不在本工作区
+datasets/
+openpi_cache/
+
+# 官方 openpi 仓库（独立 git 仓库，副本不进本仓库）
+openpi/
+
+# 运行产物（日志、评测结果、检查点）
+logs/
+runs/
+checkpoints/
+checks/output/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 本地环境、缓存与日志
+.env
+.env.*
+!.env.example
+.cache/
+.venv/
+tools/
+*.log
