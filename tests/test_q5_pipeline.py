@@ -323,7 +323,7 @@ class Q5CheckerMemoryTests(unittest.TestCase):
 class Q5CheckerOutputTests(unittest.TestCase):
     """Exercise the checker CLI with a small fake model, without GPU or weights."""
 
-    def run_checker(self, workspace, output=None, *, loss=1.0):
+    def run_checker(self, workspace, output=None, *, loss=1.0, memory_fraction=0.75):
         from types import SimpleNamespace
         import flax.nnx as nnx
         from pipeline.q5 import check_model
@@ -343,14 +343,18 @@ class Q5CheckerOutputTests(unittest.TestCase):
                 audit_path.write_text('{"status": "PASS"}\n')
             return state, replicated
 
-        argv = ["check_model", "--workspace", str(workspace), "--gpu", "0"]
+        argv = ["check_model", "--workspace", str(workspace), "--gpu", "0",
+                "--memory-fraction", str(memory_fraction)]
         if output is not None:
             argv += ["--output-dir", str(output)]
         console = io.StringIO()
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(sys, "argv", argv))
             stack.enter_context(contextlib.redirect_stdout(console))
-            stack.enter_context(mock.patch.object(check_model, "prepare_environment"))
+            from pipeline.q5.memory import configure_memory_fraction
+            stack.enter_context(mock.patch.dict(os.environ))
+            environment = stack.enter_context(mock.patch.object(check_model, "prepare_environment",
+                side_effect=lambda *a, **kw: configure_memory_fraction(kw["memory_fraction"])))
             stack.enter_context(mock.patch.object(check_model, "require_stats", return_value={"sha256": "fixture"}))
             stack.enter_context(mock.patch("pipeline.q5.config.require_base_assets"))
             builder = stack.enter_context(mock.patch("pipeline.q5.config.build_config", return_value=config))
@@ -364,7 +368,13 @@ class Q5CheckerOutputTests(unittest.TestCase):
             stack.enter_context(mock.patch("flax.nnx.merge", return_value=model))
             stack.enter_context(mock.patch("openpi.training.data_loader.create_data_loader", return_value=[batch]))
             check_model.main()
+            self.assertEqual(environment.call_args.kwargs["memory_fraction"], memory_fraction)
         return json.loads(console.getvalue()), builder.call_args.kwargs["weight_audit_path"]
+
+    def test_explicit_memory_fraction_is_forwarded_and_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report, _ = self.run_checker(directory, memory_fraction=0.65)
+            self.assertEqual(report["allocator_settings"]["memory_fraction"], 0.65)
 
     def test_default_prints_results_without_creating_reports(self):
         with tempfile.TemporaryDirectory() as directory:

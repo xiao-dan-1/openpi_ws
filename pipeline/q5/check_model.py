@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, official_train_module
+from pipeline.q5.memory import add_memory_argument, memory_settings
 
 
 def compile_training_step(official, config, mesh, state_sharding):
@@ -27,11 +28,12 @@ def main():
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--updates", type=int, default=0, help="0: load and forward only; >=3: also inspect real update samples")
     parser.add_argument("--output-dir", type=Path, help="Optionally save reports to a new directory; otherwise print results only")
+    add_memory_argument(parser)
     args = parser.parse_args()
     if args.updates < 0 or 0 < args.updates < 3:
         parser.error("Use --updates 0 or at least 3 (first update has zero LR during warmup)")
     paths = Paths.create(args.workspace)
-    prepare_environment(paths, cpu=False, gpu=args.gpu)
+    prepare_environment(paths, cpu=False, gpu=args.gpu, memory_fraction=args.memory_fraction)
     stats = require_stats(paths)
     from pipeline.q5.config import build_config, require_base_assets
     require_base_assets(paths)
@@ -111,7 +113,7 @@ def main():
                 f"Expected trainable groups did not change in sampled values: {changed_groups}")
     else:
         changed_groups, frozen_checked = set(), 0
-    report = {"status": "PASS", "full_weight_loading_tested": True, "model_forward_tested": True,
+    report = {"status": "PASS", "allocator_settings": memory_settings(), "full_weight_loading_tested": True, "model_forward_tested": True,
               "training_state_buffer_donation": bool(args.updates), "training_jit_matches_official": True,
               "whole_parameter_tree_audited": True, "action_expert_non_lora_leaves_checked": audit["action_expert_non_lora_leaves_checked"],
               "forward_loss_mean": float(loss.mean()), "real_updates": args.updates, "update_metrics": metrics,

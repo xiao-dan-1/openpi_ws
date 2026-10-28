@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 from pipeline.common.config import UPSTREAM_COMMIT, SUPPORTED_LOCAL_COMMITS
+from pipeline.q5.memory import DEFAULT_MEMORY_FRACTION, configure_memory_fraction
 
 NAME = "pi05_q5"
 ASSET_ID = "q5_pick_orange_to_basket_v2_train"
@@ -82,7 +83,8 @@ class Paths:
         return self.workspace / "openpi_cache/openpi-assets/checkpoints/pi05_base/params"
 
 
-def prepare_environment(paths, *, cpu=True, gpu=None):
+def prepare_environment(paths, *, cpu=True, gpu=None, allow_multiple_gpus=False,
+                        memory_fraction=DEFAULT_MEMORY_FRACTION):
     repo = paths.workspace / "openpi"
     revision = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     require(revision in {UPSTREAM_COMMIT, *SUPPORTED_LOCAL_COMMITS}, f"Unreviewed OpenPI revision: {revision}")
@@ -100,10 +102,15 @@ def prepare_environment(paths, *, cpu=True, gpu=None):
     if cpu:
         os.environ.update(CUDA_VISIBLE_DEVICES="", JAX_PLATFORMS="cpu")
     else:
-        require(gpu and (gpu.isdigit() or (gpu.startswith("GPU-") and "," not in gpu)), "Specify one server GPU")
+        if allow_multiple_gpus:
+            selectors = gpu.split(",") if gpu else []
+            require(selectors and len(selectors) == len(set(selectors)) and
+                    all(s.isdigit() or s.startswith("GPU-") for s in selectors), "Specify distinct server GPU selectors")
+        else:
+            require(gpu and (gpu.isdigit() or (gpu.startswith("GPU-") and "," not in gpu)), "Specify one server GPU")
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu
         os.environ.pop("JAX_PLATFORMS", None)
-        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
+        configure_memory_fraction(memory_fraction)
     sys.path.insert(0, str(repo / "src"))
     configure_video_backend()
     return revision

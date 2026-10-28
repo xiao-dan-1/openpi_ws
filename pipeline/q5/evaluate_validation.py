@@ -7,6 +7,7 @@ from pathlib import Path
 from pipeline.common.validation import experiment_name
 from pipeline.common.reporting import emit_report
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, validate_split, sha256, ASSET_ID, VALIDATION_ID
+from pipeline.q5.memory import add_memory_argument, memory_settings
 
 
 def main():
@@ -18,11 +19,12 @@ def main():
     parser.add_argument("--samples-per-episode", type=int, default=20)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--output", type=Path, help="Optionally save the validation report; otherwise print results only")
+    add_memory_argument(parser)
     args = parser.parse_args()
     if args.step < 0 or args.samples_per_episode < 1:
         parser.error("Step must be nonnegative and sample count positive")
     paths = Paths.create(args.workspace)
-    prepare_environment(paths, cpu=False, gpu=args.gpu)
+    prepare_environment(paths, cpu=False, gpu=args.gpu, memory_fraction=args.memory_fraction)
     statistics = require_stats(paths)
     manifest = validate_split(paths)
     import jax
@@ -75,7 +77,7 @@ def main():
                      "frame_indices": indices.tolist(), "mae_rad": {k: v[0] / v[1] for k, v in sums.items()},
                      "first_action_mae_rad": {k: v[2] / v[3] for k, v in sums.items()}})
         start += n
-    report = {"status": "PASS", "split": "validation", "episodes": len(rows), "seed": args.seed,
+    report = {"status": "PASS", "allocator_settings": memory_settings(), "split": "validation", "episodes": len(rows), "seed": args.seed,
               "samples_per_episode_limit": args.samples_per_episode, "checkpoint": str(checkpoint),
               "norm_stats_sha256": statistics["sha256"], "test_observations_read": 0,
               "equal_episode_mae_rad": {k: float(np.mean([r["mae_rad"][k] for r in rows])) for k in groups},

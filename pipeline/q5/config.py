@@ -8,7 +8,7 @@ from pipeline.q5.schema import JOINT_NAMES
 
 
 def build_config(paths, *, profile="smoke", exp_name="q5_smoke", batch_size=1, steps=None, num_workers=0,
-                 resume=False, warmup_steps=None, schedule_steps=None, weight_audit_path=None):
+                 resume=False, warmup_steps=None, schedule_steps=None, weight_audit_path=None, fsdp_devices=1):
     import flax.nnx as nnx
     from openpi.models.pi0_config import Pi0Config
     from openpi.training import config as upstream, optimizer
@@ -16,6 +16,8 @@ def build_config(paths, *, profile="smoke", exp_name="q5_smoke", batch_size=1, s
     from pipeline.q5.weight_loaders import Q5WeightLoader
     if profile not in {"smoke", "finetune"} or batch_size < 1 or num_workers < 0 or (steps is not None and steps < 1):
         raise ValueError("Invalid Q5 training arguments")
+    if fsdp_devices not in (1, 2) or batch_size % fsdp_devices:
+        raise ValueError("Q5 supports fsdp_devices=1 or 2 with divisible global batch")
     model = Pi0Config(pi05=True, action_dim=38, action_horizon=10, max_token_len=200,
                       discrete_state_input=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora")
     smoke = profile == "smoke"
@@ -36,7 +38,7 @@ def build_config(paths, *, profile="smoke", exp_name="q5_smoke", batch_size=1, s
             peak_lr=5e-5, decay_steps=schedule_steps, decay_lr=5e-6),
         optimizer=optimizer.AdamW(clip_gradient_norm=1.0), ema_decay=None,
         log_interval=10 if smoke else 100, save_interval=50 if smoke else 1000,
-        keep_period=50 if smoke else 5000, wandb_enabled=False, fsdp_devices=1, seed=42, resume=resume, overwrite=False,
+        keep_period=50 if smoke else 5000, wandb_enabled=False, fsdp_devices=fsdp_devices, seed=42, resume=resume, overwrite=False,
         policy_metadata={"robot_type": "q5", "joint_names": list(JOINT_NAMES), "action_representation": "absolute_joint_targets"},
     )
 
@@ -46,6 +48,7 @@ def describe(paths, config, profile):
     return dict(profile=profile, name=config.name, exp_name=config.exp_name,
                 model=dataclasses.asdict(config.model), freeze_policy=FREEZE_POLICY, video_backend=VIDEO_BACKEND,
                 learning_rate=dataclasses.asdict(config.lr_schedule), batch_size=config.batch_size,
+                fsdp_devices=config.fsdp_devices,
                 optimizer=dataclasses.asdict(config.optimizer),
                 num_workers=config.num_workers, seed=config.seed, ema_decay=config.ema_decay,
                 train_repo_id=TRAIN_ID, train_data_root=str(paths.train),
@@ -53,7 +56,7 @@ def describe(paths, config, profile):
                 norm_stats_sha256=report["sha256"], base_params=str(paths.base_params),
                 checkpoint_dir=str(config.checkpoint_dir), steps=config.num_train_steps,
                 implementation_sha256={name: sha256(Path(__file__).parent / name) for name in
-                                       ["config.py", "data.py", "weight_loaders.py", "train.py", "schema.py", "runtime.py", "schedule.py", "parameter_audit.py"]},
+                                       ["config.py", "data.py", "weight_loaders.py", "train.py", "schema.py", "runtime.py", "schedule.py", "parameter_audit.py", "memory.py", "parallelism.py", "checkpointing.py"]},
                 weight_migration="pretrained trunk + reinitialized 38-dimensional action projections")
 
 
