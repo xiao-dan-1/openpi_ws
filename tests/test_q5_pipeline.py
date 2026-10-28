@@ -291,5 +291,31 @@ class Q5WholeParameterAuditTests(unittest.TestCase):
             audit_parameters(tree, nnx.Param)
 
 
+class Q5CheckerMemoryTests(unittest.TestCase):
+    def test_training_step_reuses_old_state_buffers_as_official_trainer(self):
+        from types import SimpleNamespace
+        import jax.numpy as jnp
+        from openpi.training import sharding
+        from pipeline.q5.check_model import compile_training_step
+        mesh = sharding.make_mesh(1)
+        replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+        data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
+        def toy_step(scale, rng, state, batch):
+            return {"params": state["params"] - scale * batch}, {"loss": jnp.sum(state["params"] ** 2)}
+        state = {"params": jax.device_put(np.ones(4, np.float32), replicated)}
+        old_buffer = state["params"]
+        batch = jax.device_put(np.ones(4, np.float32), data_sharding)
+        with mock.patch("jax.jit", wraps=jax.jit) as compiler:
+            step = compile_training_step(SimpleNamespace(train_step=toy_step), 0.1, mesh, replicated)
+            self.assertEqual(compiler.call_args.kwargs["donate_argnums"], (1,))
+        for _ in range(3):
+            with sharding.set_mesh(mesh):
+                state, info = step(jax.random.key(0), state, batch)
+        jax.block_until_ready(state)
+        self.assertTrue(old_buffer.is_deleted())
+        np.testing.assert_allclose(state["params"], np.full(4, 0.7), atol=1e-6)
+        self.assertTrue(np.isfinite(float(info["loss"])))
+
+
 if __name__ == "__main__":
     unittest.main()

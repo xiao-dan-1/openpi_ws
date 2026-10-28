@@ -1,9 +1,24 @@
 """Server GPU preflight: full weights, whole-tree freeze audit, forward and optional updates."""
 import argparse
+import functools
 import json
 from pathlib import Path
 
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, official_train_module
+
+
+def compile_training_step(official, config, mesh, state_sharding):
+    """Match official scripts/train.py, including ownership of old state buffers."""
+    import jax
+    from openpi.training import sharding
+    replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+    data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
+    return jax.jit(
+        functools.partial(official.train_step, config),
+        in_shardings=(replicated, state_sharding, data_sharding),
+        out_shardings=(state_sharding, replicated),
+        donate_argnums=(1,),
+    )
 
 
 def main():
@@ -33,19 +48,27 @@ def main():
     config = build_config(paths, batch_size=1, weight_audit_path=out / "weight_loading_report.json")
     official = official_train_module(paths)
     mesh = sharding.make_mesh(config.fsdp_devices)
-    state, _ = official.init_train_state(config, jax.random.key(config.seed), mesh, resume=False)
+    state, state_sharding = official.init_train_state(config, jax.random.key(config.seed), mesh, resume=False)
     jax.block_until_ready(state)
     # Official initialization reads/merges the entire checkpoint and validates every shape.
     audit = json.loads((out / "weight_loading_report.json").read_text())
-    loader = data_loader.create_data_loader(config, shuffle=False, num_batches=max(args.updates, 1))
+    data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
+    loader = data_loader.create_data_loader(config, sharding=data_sharding, shuffle=False, num_batches=max(args.updates, 1))
     iterator = iter(loader)
     batch = next(iterator)
+    graphdef = state.model_def
     def forward(params, observation, actions):
-        model = nnx.merge(state.model_def, params)
+        model = nnx.merge(graphdef, params)
         model.eval()
         return model.compute_loss(jax.random.key(123), observation, actions, train=False)
-    loss = np.asarray(jax.jit(forward)(state.params, *batch))
+    forward_step = jax.jit(forward)
+    with sharding.set_mesh(mesh):
+        loss = np.array(forward_step(state.params, *batch), copy=True)
     require(np.isfinite(loss).all(), "Model forward produced non-finite loss")
+    # Standalone forward is only a check. Do not retain its compiled cache during
+    # backward compilation; subsequent checks need no reference to its buffers.
+    forward_step.clear_cache()
+    del forward_step
 
     def sampled_values(params):
         result = {}
@@ -60,11 +83,12 @@ def main():
     before = sampled_values(state.params) if args.updates else None
     metrics = []
     if args.updates:
-        step = jax.jit(lambda rng, current, b: official.train_step(config, rng, current, b))
+        step = compile_training_step(official, config, mesh, state_sharding)
         for i in range(args.updates):
             if i:
                 batch = next(iterator)
-            state, info = step(jax.random.key(config.seed), state, batch)
+            with sharding.set_mesh(mesh):
+                state, info = step(jax.random.key(config.seed), state, batch)
             numeric = {k: float(v) for k, v in jax.device_get(info).items()}
             require(all(np.isfinite(v) for v in numeric.values()), "Non-finite training metric")
             metrics.append(numeric)
@@ -85,6 +109,7 @@ def main():
     else:
         changed_groups, frozen_checked = set(), 0
     report = {"status": "PASS", "full_weight_loading_tested": True, "model_forward_tested": True,
+              "training_state_buffer_donation": bool(args.updates), "training_jit_matches_official": True,
               "whole_parameter_tree_audited": True, "action_expert_non_lora_leaves_checked": audit["action_expert_non_lora_leaves_checked"],
               "forward_loss_mean": float(loss.mean()), "real_updates": args.updates, "update_metrics": metrics,
               "changed_groups_in_samples": sorted(changed_groups), "frozen_leaf_samples_checked": frozen_checked,

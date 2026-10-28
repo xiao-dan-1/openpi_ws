@@ -72,6 +72,12 @@ openpi/.venv/bin/python -B -u -m pipeline.q5.check_model \
 
 三步越过首步零学习率。检查loss/梯度有限，每个参数张量最多分布抽查32个元素，确认可训练组件更新、冻结参数抽样值不变；该抽样不等于全张量逐值证明。完整参数清单另由参数树报告提供。保存恢复另用smoke验收。
 
+三步检查器的训练JIT必须与官方trainer保持一致，包括 donate_argnums=(1,)、输入/输出sharding和mesh上下文。donation允许新训练状态复用已不再使用的旧状态显存。初版检查器漏了这一设置，在本机16GB卡首次更新时出现输入/输出内存超限和OOM，不能用那次结果直接判定正式训练的最低显存。当前已对齐官方设置并释放单独前向检查的编译缓存；CPU小型回归验证了旧状态buffer被复用，但完整GPU更新仍需重测。
+
+后续本机16GB重测仍在真实更新阶段OOM；完整加载和前向通过。修复保证检查器与官方内存处理一致，不保证16GB能容纳当前训练配置；24GB服务器的更新和保存恢复仍待实测。
+
+失败输出目录保留INCOMPLETE记录，不要覆盖。修复后重测请换新目录，例如 --output-dir checks/output/q5/model_updates_v2_retry1，并另写日志。已有服务器版本可叠加 q5_check_model_memory_fix_v1.zip；不改变模型、冻结、学习率、batch或显存预留比例。
+
 ## 学习率和样本预算
 
 | 参数 | smoke | finetune默认参考 |
