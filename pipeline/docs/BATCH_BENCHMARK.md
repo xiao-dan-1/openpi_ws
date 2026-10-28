@@ -78,7 +78,7 @@ tail -n 50 -f logs/benchmark_batch.log
 | memory_after_init / memory_after_measurement | JAX 分配器统计；若提供 peak_bytes_in_use，可用于辅助判断内存峰值 |
 | system_available_before_mib / system_available_min_mib | 测试前及采样期间最低的全机可用系统内存，MiB 单位 |
 
-使用 90% 显存份额和预分配设置。nvidia-smi 可能对多个 batch 显示接近的预留量，因此不能仅靠它判断真实额外显存。短测通过也不能保证长程训练和保存检查点时永远不会 OOM。
+当前使用 75% 显存份额和预分配设置。nvidia-smi 可能对多个 batch 显示接近的预留量，因此不能仅靠它判断真实额外显存。短测通过也不能保证长程训练和保存检查点时永远不会 OOM。上文历史容量结果使用旧版 90% 设置，新份额下的容量需重新实测。
 
 计时使用显式同步，将加载与计算分开，便于比较；它不能完整模拟正式训练中 CPU/GPU 的重叠，也不包含检查点保存时间。
 

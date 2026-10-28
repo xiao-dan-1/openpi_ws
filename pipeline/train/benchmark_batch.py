@@ -152,7 +152,7 @@ def worker(args):
                               batch_size=args.batch_size, num_workers=args.num_workers)
         require_assets(config, weights=True, full_stats=True)
         report["config"] = describe(config, "finetune")
-        report["allocator"] = {"preallocate": True, "memory_fraction": 0.9,
+        report["allocator"] = {"preallocate": True, "memory_fraction": 0.75,
                                "allocator_env": os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "default")}
         official = load_official_script("train")
         mesh = sharding.make_mesh(config.fsdp_devices)

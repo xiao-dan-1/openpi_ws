@@ -70,7 +70,7 @@ def prepare_environment(*, cpu=True, gpu=None, cache_dir=None):
             raise ValueError("--gpu must specify one allocated GPU index or GPU-UUID")
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu
         os.environ.pop("JAX_PLATFORMS", None)
-        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"
+        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 
 
 def build_config(*, profile="smoke", exp_name="smoke", batch_size=None, steps=None,

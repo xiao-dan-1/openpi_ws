@@ -103,7 +103,7 @@ def prepare_environment(paths, *, cpu=True, gpu=None):
         require(gpu and (gpu.isdigit() or (gpu.startswith("GPU-") and "," not in gpu)), "Specify one server GPU")
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu
         os.environ.pop("JAX_PLATFORMS", None)
-        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"
+        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
     sys.path.insert(0, str(repo / "src"))
     configure_video_backend()
     return revision
