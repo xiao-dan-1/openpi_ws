@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--updates", type=int, default=0, help="0: load and forward only; >=3: also inspect real update samples")
-    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path, help="Optionally save reports to a new directory; otherwise print results only")
     args = parser.parse_args()
     if args.updates < 0 or 0 < args.updates < 3:
         parser.error("Use --updates 0 or at least 3 (first update has zero LR during warmup)")
@@ -39,19 +39,22 @@ def main():
     import jax
     import numpy as np
     from openpi.training import data_loader, sharding
-    from pipeline.q5.parameter_audit import component
+    from pipeline.q5.parameter_audit import audit_parameters, component
     require(jax.default_backend() == "gpu" and jax.device_count() == 1, "Run this preflight on one server GPU")
-    out = (args.output_dir or paths.workspace / "checks/output/q5/model_preflight_v2").resolve()
-    require(not out.exists(), "Output directory already exists; select a fresh --output-dir")
-    out.mkdir(parents=True)
-    (out / "INCOMPLETE").write_text("Server model checks in progress\n")
-    config = build_config(paths, batch_size=1, weight_audit_path=out / "weight_loading_report.json")
+    out = args.output_dir.resolve() if args.output_dir is not None else None
+    if out is not None:
+        require(not out.exists(), "Output directory already exists; select a fresh --output-dir")
+        out.mkdir(parents=True)
+        (out / "INCOMPLETE").write_text("Server model checks in progress\n")
+    config = build_config(paths, batch_size=1,
+                          weight_audit_path=out / "weight_loading_report.json" if out is not None else None)
     official = official_train_module(paths)
     mesh = sharding.make_mesh(config.fsdp_devices)
     state, state_sharding = official.init_train_state(config, jax.random.key(config.seed), mesh, resume=False)
     jax.block_until_ready(state)
-    # Official initialization reads/merges the entire checkpoint and validates every shape.
-    audit = json.loads((out / "weight_loading_report.json").read_text())
+    # Audit the initialized tree in memory; checking never depends on a saved report.
+    # Official initialization reads/merges the checkpoint and validates every shape.
+    audit = audit_parameters(state.params.to_pure_dict(), config.trainable_filter)
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
     loader = data_loader.create_data_loader(config, sharding=data_sharding, shuffle=False, num_batches=max(args.updates, 1))
     iterator = iter(loader)
@@ -117,8 +120,9 @@ def main():
               "state_shape": list(batch[0].state.shape), "action_shape": list(batch[1].shape),
               "norm_stats_sha256": stats["sha256"], "uses_training_data_only": True,
               "checkpoint_save_restore_tested": False, "note": "No checkpoint saved; use a smoke experiment to test persistence."}
-    (out / "model_check.json").write_text(json.dumps(report, indent=2) + "\n")
-    (out / "INCOMPLETE").unlink()
+    if out is not None:
+        (out / "model_check.json").write_text(json.dumps(report, indent=2) + "\n")
+        (out / "INCOMPLETE").unlink()
     print(json.dumps(report, indent=2))
 
 

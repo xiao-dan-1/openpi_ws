@@ -1,7 +1,10 @@
 """Small CPU checks; never initialize the full model, load weights, or train."""
 import copy
+import contextlib
+import io
 import os
 import json
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -315,6 +318,101 @@ class Q5CheckerMemoryTests(unittest.TestCase):
         self.assertTrue(old_buffer.is_deleted())
         np.testing.assert_allclose(state["params"], np.full(4, 0.7), atol=1e-6)
         self.assertTrue(np.isfinite(float(info["loss"])))
+
+
+class Q5CheckerOutputTests(unittest.TestCase):
+    """Exercise the checker CLI with a small fake model, without GPU or weights."""
+
+    def run_checker(self, workspace, output=None, *, loss=1.0):
+        from types import SimpleNamespace
+        import flax.nnx as nnx
+        from pipeline.q5 import check_model
+        from openpi.training import sharding
+
+        tree = {"PaliGemma": {"llm": {"qkv_1": {"kernel": np.zeros((2, 2), np.float32)}}}}
+        state = SimpleNamespace(params=SimpleNamespace(to_pure_dict=lambda: tree), model_def=object())
+        config = SimpleNamespace(fsdp_devices=1, seed=42, trainable_filter=nnx.Nothing)
+        mesh = sharding.make_mesh(1)
+        replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+        batch = (SimpleNamespace(state=np.zeros((1, 38))), np.zeros((1, 10, 38)))
+
+        def initialize(actual_config, *args, **kwargs):
+            self.assertIs(actual_config, config)
+            audit_path = builder.call_args.kwargs["weight_audit_path"]
+            if audit_path is not None:
+                audit_path.write_text('{"status": "PASS"}\n')
+            return state, replicated
+
+        argv = ["check_model", "--workspace", str(workspace), "--gpu", "0"]
+        if output is not None:
+            argv += ["--output-dir", str(output)]
+        console = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(sys, "argv", argv))
+            stack.enter_context(contextlib.redirect_stdout(console))
+            stack.enter_context(mock.patch.object(check_model, "prepare_environment"))
+            stack.enter_context(mock.patch.object(check_model, "require_stats", return_value={"sha256": "fixture"}))
+            stack.enter_context(mock.patch("pipeline.q5.config.require_base_assets"))
+            builder = stack.enter_context(mock.patch("pipeline.q5.config.build_config", return_value=config))
+            official = SimpleNamespace(init_train_state=initialize)
+            stack.enter_context(mock.patch.object(check_model, "official_train_module", return_value=official))
+            stack.enter_context(mock.patch("jax.default_backend", return_value="gpu"))
+            stack.enter_context(mock.patch("jax.device_count", return_value=1))
+            stack.enter_context(mock.patch("jax.block_until_ready"))
+            stack.enter_context(mock.patch("jax.jit", side_effect=lambda fn: mock.Mock(side_effect=fn)))
+            model = SimpleNamespace(eval=lambda: None, compute_loss=lambda *a, **kw: np.array([loss]))
+            stack.enter_context(mock.patch("flax.nnx.merge", return_value=model))
+            stack.enter_context(mock.patch("openpi.training.data_loader.create_data_loader", return_value=[batch]))
+            check_model.main()
+        return json.loads(console.getvalue()), builder.call_args.kwargs["weight_audit_path"]
+
+    def test_default_prints_results_without_creating_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            # A previous default report directory must not block a console-only run.
+            previous = workspace / "checks/output/q5/model_preflight_v2"
+            previous.mkdir(parents=True)
+            sentinel = previous / "model_check.json"
+            sentinel.write_text("previous report")
+            before = set(workspace.rglob("*"))
+            report, audit_path = self.run_checker(workspace)
+            self.assertEqual(report["status"], "PASS")
+            self.assertTrue(report["whole_parameter_tree_audited"])
+            self.assertIsNone(audit_path)
+            self.assertEqual(set(workspace.rglob("*")), before)
+            self.assertEqual(sentinel.read_text(), "previous report")
+
+    def test_explicit_directory_saves_reports_and_removes_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "reports"
+            report, audit_path = self.run_checker(directory, output)
+            self.assertEqual(audit_path, output / "weight_loading_report.json")
+            self.assertEqual(json.loads((output / "model_check.json").read_text()), report)
+            self.assertEqual({p.name for p in output.iterdir()}, {"model_check.json", "weight_loading_report.json"})
+
+    def test_forward_failure_writes_marker_only_when_requested(self):
+        for save in [False, True]:
+            with self.subTest(save=save), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                output = workspace / "reports" if save else None
+                with self.assertRaisesRegex(ValueError, "non-finite loss"):
+                    self.run_checker(workspace, output, loss=float("nan"))
+                if save:
+                    self.assertTrue((output / "INCOMPLETE").is_file())
+                    self.assertFalse((output / "model_check.json").exists())
+                else:
+                    self.assertEqual(list(workspace.iterdir()), [])
+
+    def test_explicit_existing_directory_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "reports"
+            output.mkdir()
+            sentinel = output / "model_check.json"
+            sentinel.write_text("previous report")
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                self.run_checker(directory, output)
+            self.assertEqual(list(output.iterdir()), [sentinel])
+            self.assertEqual(sentinel.read_text(), "previous report")
 
 
 if __name__ == "__main__":

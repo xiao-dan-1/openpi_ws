@@ -22,7 +22,7 @@ state=(38,)，actions=(10,38)，顺序为左臂7、右臂7、左手12、右手12
 
 直接调用与LIBERO相同的 model.get_freeze_filter()：LLM非LoRA参数（含动作专家）冻结；LoRA、视觉编码器、完整动作投影层、时间MLP参与训练。
 
-CPU检查会审计真实基础检查点全部元数据路径。服务器初始化另生成 weight_loading_report.json，逐参数记录来源、形状、dtype和可训练状态；只允许动作投影及新增LoRA重新初始化。CPU元数据检查不能替代完整权重加载。
+CPU检查会审计真实基础检查点全部元数据路径。服务器训练初始化会生成 weight_loading_report.json；模型检查入口仅在指定 --output-dir 时保存该报告，逐参数记录来源、形状、dtype和可训练状态。只允许动作投影及新增LoRA重新初始化。CPU元数据检查不能替代完整权重加载。
 
 ## 更新部署
 
@@ -63,7 +63,13 @@ openpi/.venv/bin/python -B -m pipeline.q5.check_config
 openpi/.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0
 ```
 
-默认输出 checks/output/q5/model_preflight_v2，已有则拒绝覆盖。此入口会创建完整模型和优化器，不是轻量CPU检查，不保存检查点。进一步做三步真实更新时，另选输出目录：
+默认只在终端显示结果，不创建报告目录或文件。此入口会创建完整模型和优化器，不是轻量CPU检查，不保存检查点。三步真实更新也可直接运行：
+
+```bash
+openpi/.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0 --updates 3
+```
+
+需要保留报告时，显式指定 --output-dir；仅此时保存 weight_loading_report.json、model_check.json，以及检查期间的 INCOMPLETE 标记。指定的目录已存在则拒绝覆盖：
 
 ```bash
 openpi/.venv/bin/python -B -u -m pipeline.q5.check_model \
@@ -76,7 +82,7 @@ openpi/.venv/bin/python -B -u -m pipeline.q5.check_model \
 
 后续本机16GB重测仍在真实更新阶段OOM；完整加载和前向通过。修复保证检查器与官方内存处理一致，不保证16GB能容纳当前训练配置；24GB服务器的更新和保存恢复仍待实测。
 
-失败输出目录保留INCOMPLETE记录，不要覆盖。修复后重测请换新目录，例如 --output-dir checks/output/q5/model_updates_v2_retry1，并另写日志。已有服务器版本可叠加 q5_check_model_memory_fix_v1.zip；不改变模型、冻结、学习率、batch或显存预留比例。
+指定 --output-dir 后，失败输出目录保留 INCOMPLETE 记录。保留报告重测时请换新目录，例如 --output-dir checks/output/q5/model_updates_v2_retry1；不保存报告时可直接重新执行。已有服务器版本可叠加 q5_check_model_memory_fix_v1.zip；不改变模型、冻结、学习率、batch或显存预留比例。
 
 ## 学习率和样本预算
 
