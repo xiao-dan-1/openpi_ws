@@ -3,9 +3,11 @@ import argparse
 import hashlib
 import json
 import logging
+from pathlib import Path
 
 from pipeline.common.config import WORKSPACE, UPSTREAM_COMMIT, build_config, describe, prepare_environment, require_assets
 from pipeline.common.validation import experiment_name
+from pipeline.common.reporting import emit_report
 
 
 def main():
@@ -14,6 +16,7 @@ def main():
     parser.add_argument("--exp-name", required=True, type=experiment_name)
     parser.add_argument("--step", required=True, type=int)
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--output", type=Path, help="Optionally save the service record; otherwise print it only")
     args = parser.parse_args()
     if args.step < 0 or not 1 <= args.port <= 65535:
         parser.error("step must be non-negative; port must be 1..65535")
@@ -49,9 +52,8 @@ def main():
         "upstream_commit": UPSTREAM_COMMIT, "model": original["model"],
         "norm_stats_sha256": stats_sha,
     }
-    (run_dir / f"serve_{args.step}.json").write_text(
-        json.dumps({"checkpoint": str(checkpoint), "gpu": args.gpu, "port": args.port,
-                    "metadata": metadata}, indent=2), encoding="utf-8")
+    emit_report({"checkpoint": str(checkpoint), "gpu": args.gpu, "port": args.port,
+                 "metadata": metadata}, args.output)
     logging.info("Policy loaded; starting WebSocket server at 127.0.0.1:%s", args.port)
     WebsocketPolicyServer(policy, host="127.0.0.1", port=args.port, metadata=metadata).serve_forever()
 

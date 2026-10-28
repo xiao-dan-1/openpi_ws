@@ -3,6 +3,7 @@ import argparse
 import dataclasses
 import json
 from pathlib import Path
+from pipeline.common.reporting import emit_report
 
 from pipeline.q5.runtime import Paths, prepare_environment, require_stats, require, validate_split, FREEZE_POLICY
 
@@ -10,7 +11,7 @@ from pipeline.q5.runtime import Paths, prepare_environment, require_stats, requi
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, help="Optionally save JSON reports; otherwise print results only")
     args = parser.parse_args()
     paths = Paths.create(args.workspace)
     revision = prepare_environment(paths, cpu=True)
@@ -144,11 +145,11 @@ def main():
                   data_contract=contract_report,
                   real_base_metadata_parameter_audit={k: v for k, v in metadata_audit.items() if k != "parameters"},
                   full_weight_loading_tested=False, model_forward_tested=False, training_tested=False)
-    output = args.output or paths.workspace / "checks/output/q5/check_config.json"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.with_name(output.stem + "_base_parameter_metadata.json").write_text(json.dumps(metadata_audit, indent=2) + "\n")
-    output.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
+    if args.output is not None:
+        output = args.output.resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.with_name(output.stem + "_base_parameter_metadata.json").write_text(json.dumps(metadata_audit, indent=2) + "\n")
+    emit_report(report, args.output)
 
 
 if __name__ == "__main__":

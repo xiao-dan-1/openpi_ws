@@ -1,6 +1,5 @@
 """Run the official LIBERO evaluator in the separate Python 3.8 environment."""
 import argparse
-import datetime
 import importlib.util
 import json
 import logging
@@ -11,6 +10,7 @@ import sys
 from pipeline.common.config import WORKSPACE
 from pipeline.inference.policy_rpc import read_server_metadata, verify_server_metadata
 from pipeline.common.validation import experiment_name
+from pipeline.common.reporting import artifact_directory, emit_report
 
 
 class EvaluationLog(logging.Handler):
@@ -67,20 +67,24 @@ def main():
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--render-backend", choices=["osmesa", "egl"], default="osmesa")
+    parser.add_argument("--output-dir", type=Path, help="Optionally keep evaluation videos and report; otherwise use temporary files")
     args = parser.parse_args()
     if not 1 <= args.trials <= 50 or args.step < 0 or not 1 <= args.port <= 65535:
         parser.error("trials must be 1..50; step >= 0; port 1..65535")
+    with artifact_directory(args.output_dir) as output:
+        run_evaluation(args, output)
+
+
+def run_evaluation(args, output):
     prepare_simulation(args.render_backend)
     logging.basicConfig(level=logging.INFO, force=True)
     metadata = read_server_metadata(args.host, args.port)
     identity = verify_server_metadata(metadata, args.exp_name, args.step)
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = WORKSPACE / "runs/pi05_libero" / args.exp_name / f"eval_{args.step}" / f"{args.suite}_{stamp}"
-    output.mkdir(parents=True)
     capture = EvaluationLog()
     logging.getLogger().addHandler(capture)
     report = {"status": "FAIL", "policy": identity, "suite": args.suite, "trials_per_task": args.trials,
-              "seed": args.seed, "render_backend": args.render_backend, "output_dir": str(output)}
+              "seed": args.seed, "render_backend": args.render_backend,
+              "output_dir": str(output) if args.output_dir is not None else None}
     try:
         path = WORKSPACE / "openpi/examples/libero/main.py"
         spec = importlib.util.spec_from_file_location("_pipeline_libero_evaluator", path)
@@ -103,8 +107,7 @@ def main():
     finally:
         logging.getLogger().removeHandler(capture)
         report["runtime_errors"] = capture.errors
-        (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(json.dumps(report, indent=2), flush=True)
+        emit_report(report, output / "result.json" if args.output_dir is not None else None)
 
 
 if __name__ == "__main__":

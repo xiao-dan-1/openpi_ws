@@ -1,5 +1,7 @@
 """Orchestration failure tests with isolated MOCK workers; no GPU/model test."""
 import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,35 +17,62 @@ from pipeline.train import benchmark_batch as benchmark
 
 
 class BatchDriverTest(unittest.TestCase):
-    def run_scenario(self, stub, num_workers=0):
+    def run_scenario(self, stub, num_workers=0, save_reports=True):
         with tempfile.TemporaryDirectory(prefix="openpi_batch_driver_") as directory:
             args = argparse.Namespace(gpu="0", batches=[1, 2, 4], warmup_steps=1,
                                       measure_steps=2, timeout_seconds=30, cache_dir=None,
-                                      num_workers=num_workers)
+                                      num_workers=num_workers,
+                                      output_dir=Path(directory) / "reports" if save_reports else None)
             real_popen = subprocess.Popen
             launched = []
             self.forwarded_workers = []
+            worker_directories = set()
 
             def launch(command, **kwargs):
                 self.assertEqual(command[1:5], ["-B", "-u", "-m", "pipeline.train.benchmark_batch"])
                 self.assertEqual(kwargs["cwd"], Path(directory))
                 batch = command[command.index("--batch-size") + 1]
                 output = command[command.index("--worker-output") + 1]
+                worker_directories.add(Path(output).parent)
                 workers = command[command.index("--num-workers") + 1]
                 launched.append(int(batch))
                 self.forwarded_workers.append(int(workers))
                 return real_popen([sys.executable, "-c", stub, output, batch, workers], **kwargs)
 
             gpu = {"index": 0, "uuid": "GPU-test", "total_mib": 24576, "used_mib": 13}
-            with mock.patch.object(benchmark, "WORKSPACE", Path(directory)), \
+            console = io.StringIO()
+            with contextlib.redirect_stdout(console), \
+                 mock.patch.object(benchmark, "WORKSPACE", Path(directory)), \
                  mock.patch.object(benchmark, "gpu_snapshot", return_value=gpu), \
                  mock.patch.object(benchmark, "gpu_processes", return_value={}), \
                  mock.patch.object(benchmark.subprocess, "Popen", side_effect=launch):
                 exit_code = benchmark.driver(args)
-            summary_path = next(Path(directory).glob("checks/output/batch_benchmark/*/summary.json"))
-            summary = json.loads(summary_path.read_text())
+            if save_reports:
+                summary = json.loads((args.output_dir / "summary.json").read_text())
+            else:
+                text = console.getvalue()
+                summary = json.loads(text[text.rfind("\n{") + 1:])
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                self.assertTrue(all(not p.exists() for p in worker_directories))
             self.assertFalse((Path(directory) / "checkpoints").exists())
             return exit_code, launched, summary
+
+    def test_default_returns_all_metrics_and_cleans_worker_files(self):
+        code, launched, summary = self.run_scenario(
+            "import json,sys; from pathlib import Path; "
+            "Path(sys.argv[1]).write_text(json.dumps({'batch_size':int(sys.argv[2]),'status':'PASS'}))",
+            save_reports=False)
+        self.assertEqual(code, 0)
+        self.assertEqual(launched, [1, 2, 4])
+        self.assertIsNone(summary["output_dir"])
+        self.assertEqual(len(summary["results"]), 3)
+
+    def test_failed_default_keeps_error_in_console_and_cleans_files(self):
+        code, launched, summary = self.run_scenario(
+            "import sys; print('candidate failure details'); sys.exit(2)", save_reports=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(launched, [1])
+        self.assertIn("candidate failure details", summary["results"][0]["worker_log_tail"])
 
     def test_oom_stops_larger_batches(self):
         code, launched, summary = self.run_scenario(

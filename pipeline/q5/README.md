@@ -53,7 +53,7 @@ openpi/.venv/bin/python -B -m unittest tests.test_q5_pipeline tests.test_pipelin
 openpi/.venv/bin/python -B -m pipeline.q5.check_config
 ```
 
-检查包括三集合隔离、train/validation真实样本、全状态token未截断、同一训练统计下的归一化、PyAV/图像掩码、无delta转换、数值/时间/QC记录及真实基础权重元数据冻结。报告在 checks/output/q5/check_config.json，完整元数据清单为同目录 check_config_base_parameter_metadata.json。
+检查包括三集合隔离、train/validation真实样本、全状态token未截断、同一训练统计下的归一化、PyAV/图像掩码、无delta转换、数值/时间/QC记录及真实基础权重元数据冻结。默认只在终端显示结果；需要报告时加 --output checks/output/q5/check_config.json，另保存同目录 check_config_base_parameter_metadata.json。
 
 ## 服务器完整模型检查
 
@@ -129,7 +129,7 @@ openpi/.venv/bin/python -B -u -m pipeline.q5.evaluate_validation \
   --gpu 0 --exp-name q5_v2_lora_01 --step 999
 ```
 
-仅从五条validation中各等间距抽最多20个起点，固定种子和noise，使用训练统计，按轨迹等权报告双臂/双手的目标MAE与首动作MAE（rad），排除窗口末尾补齐帧。相同采样规则用于不同检查点；关注右臂/右手，避免左手常零稀释误差。它是离线误差，不是闭环成功率；test不用于选择检查点。
+仅从五条validation中各等间距抽最多20个起点，固定种子和noise，使用训练统计，按轨迹等权报告双臂/双手的目标MAE与首动作MAE（rad），排除窗口末尾补齐帧。默认只在终端显示结果；需要保存时加 --output checks/output/q5/validation/q5_v2_lora_01/999.json。未指定输出时，已有旧报告不会阻止重复评估。相同采样规则用于不同检查点；关注右臂/右手，避免左手常零稀释误差。它是离线误差，不是闭环成功率；test不用于选择检查点。
 
 ## 验证边界
 

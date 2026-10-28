@@ -1,13 +1,13 @@
 """Check one real LIBERO scene, 10 stabilization steps, cameras and robot state."""
 import argparse
-import datetime
 import importlib.util
-import json
 import logging
 import sys
+from pathlib import Path
 
 from pipeline.common.config import WORKSPACE
 from pipeline.eval.eval_libero import prepare_simulation
+from pipeline.common.reporting import emit_report
 
 
 def main():
@@ -16,17 +16,18 @@ def main():
                         default="libero_spatial")
     parser.add_argument("--task-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--output-dir", type=Path, help="Optionally save camera images and report; otherwise print results only")
     args = parser.parse_args()
     if args.task_id < 0:
         parser.error("task-id must be non-negative")
     # Use the same private LIBERO paths and CPU OSMesa backend as the evaluator.
     prepare_simulation("osmesa")
     logging.basicConfig(level=logging.INFO, force=True)
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = WORKSPACE / "checks/output/libero_simulation" / stamp
-    output.mkdir(parents=True)
+    output = args.output_dir.resolve() if args.output_dir is not None else None
+    if output is not None:
+        output.mkdir(parents=True)
     report = {"status": "FAIL", "suite": args.suite, "task_id": args.task_id,
-              "seed": args.seed, "render_backend": "osmesa", "output_dir": str(output)}
+              "seed": args.seed, "render_backend": "osmesa", "output_dir": str(output) if output is not None else None}
     env = None
     try:
         import numpy as np
@@ -61,10 +62,11 @@ def main():
                 raise ValueError(f"Camera {key} returned a uniform image")
             # The official evaluator rotates simulator frames by 180 degrees.
             pixels = np.ascontiguousarray(raw[::-1, ::-1])
-            Image.fromarray(pixels).save(output / filename)
+            if output is not None:
+                Image.fromarray(pixels).save(output / filename)
             cameras[key] = {"shape": list(raw.shape), "dtype": str(raw.dtype),
                             "pixel_min": int(raw.min()), "pixel_max": int(raw.max()),
-                            "image_path": str(output / filename)}
+                            "image_path": str(output / filename) if output is not None else None}
         state = np.concatenate((observation["robot0_eef_pos"],
                                 official._quat2axisangle(observation["robot0_eef_quat"].copy()),
                                 observation["robot0_gripper_qpos"]))
@@ -84,8 +86,7 @@ def main():
             if env is not None:
                 env.close()
         finally:
-            (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-            print(json.dumps(report, indent=2), flush=True)
+            emit_report(report, output / "result.json" if output is not None else None)
 
 
 if __name__ == "__main__":

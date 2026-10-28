@@ -4,10 +4,12 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 from pipeline.common.config import WORKSPACE, UPSTREAM_COMMIT, build_config, describe, prepare_environment, require_assets
 from pipeline.common.validation import experiment_name
+from pipeline.common.reporting import emit_report
 
 
 def main():
@@ -16,6 +18,7 @@ def main():
     parser.add_argument("--port", type=int, default=8100)
     parser.add_argument("--exp-name", type=experiment_name, default="libero_lora_01")
     parser.add_argument("--step", type=int, default=999)
+    parser.add_argument("--output", type=Path, help="Optionally save the service record; otherwise print it only")
     parser.add_argument("--memory-fraction", type=float, default=0.70)
     parser.add_argument("--restore-concurrent-gb", type=int, default=3)
     parser.add_argument("--file-io-concurrency", type=int, default=1,
@@ -68,10 +71,9 @@ def main():
     identity = {"experiment": args.exp_name, "checkpoint_step": args.step,
                 "upstream_commit": UPSTREAM_COMMIT, "model": record["model"], "norm_stats_sha256": digest}
     info = {"pipeline": identity}
-    (run_dir / f"local_serve_{args.step}.json").write_text(
-        json.dumps({"metadata": info, "memory_fraction": args.memory_fraction,
-                    "restore_concurrent_gb": args.restore_concurrent_gb,
-                    "file_io_concurrency": args.file_io_concurrency}, indent=2), encoding="utf-8")
+    emit_report({"metadata": info, "memory_fraction": args.memory_fraction,
+                 "restore_concurrent_gb": args.restore_concurrent_gb,
+                 "file_io_concurrency": args.file_io_concurrency}, args.output)
     logging.info("Local checkpoint loaded; serving on 127.0.0.1:%s", args.port)
     WebsocketPolicyServer(policy, host="127.0.0.1", port=args.port, metadata=info).serve_forever()
 

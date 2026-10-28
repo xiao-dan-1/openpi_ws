@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from pipeline.common.validation import experiment_name
+from pipeline.common.reporting import emit_report
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, validate_split, sha256, ASSET_ID, VALIDATION_ID
 
 
@@ -16,7 +17,7 @@ def main():
     parser.add_argument("--step", required=True, type=int)
     parser.add_argument("--samples-per-episode", type=int, default=20)
     parser.add_argument("--seed", type=int, default=123)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, help="Optionally save the validation report; otherwise print results only")
     args = parser.parse_args()
     if args.step < 0 or args.samples_per_episode < 1:
         parser.error("Step must be nonnegative and sample count positive")
@@ -38,8 +39,8 @@ def main():
     require(sha256(checkpoint / "assets" / ASSET_ID / "norm_stats.json") == statistics["sha256"], "Saved checkpoint statistics mismatch")
     config = build_config(paths, profile=run["profile"], exp_name=args.exp_name)
     require(dataclasses.asdict(config.model) == run["model"], "Checkpoint model specification differs")
-    output = args.output or paths.workspace / "checks/output/q5/validation" / args.exp_name / f"{args.step}.json"
-    require(not output.exists(), "Validation output exists; select a new --output")
+    if args.output is not None:
+        require(not args.output.exists(), "Validation output exists; select a new --output")
     policy = policy_config.create_trained_policy(config, checkpoint)
     data = dataclasses.replace(config.data.create(config.assets_dirs, config.model), repo_id=VALIDATION_ID)
     if hasattr(data, "repo_root"):
@@ -81,9 +82,7 @@ def main():
               "equal_episode_first_action_mae_rad": {k: float(np.mean([r["first_action_mae_rad"][k] for r in rows])) for k in groups},
               "per_episode": rows, "padding_excluded_from_metrics": True,
               "note": "Offline demonstration-action error under fixed sample/noise schedule; not a closed-loop success rate."}
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
+    emit_report(report, args.output)
 
 
 if __name__ == "__main__":

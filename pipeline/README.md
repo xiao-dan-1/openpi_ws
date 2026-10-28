@@ -12,6 +12,10 @@
 
 ## 文件与目录
 
+诊断、推理检查与评估默认在终端显示结果，只有显式指定输出路径才持久保存报告：Q5 check_config/evaluate_validation、LIBERO check_policy 和两种策略服务使用 --output <JSON文件>；check_model、check_simulation、eval_libero、check_policy_transport 和 benchmark_batch 使用 --output-dir <新目录>。仿真图片、评估视频、batch 子进程日志也只在指定目录时保留。通信测试和 batch 测试需要的中间文件使用系统临时目录并在退出时清理，默认仍会打印最终指标及失败日志摘要。
+
+数据集、归一化统计及其来源记录、训练/恢复配置和检查点是后续程序使用的产物，仍按原流程保存。local_docker_serve 重建的 config.json 供客户端核验服务身份使用，也仍保留；可选的是额外服务报告。
+
 将完整 pipeline 文件夹放在工作区下，与 openpi、datasets 和 openpi_cache 并列。所有 Python 命令在工作区根目录使用 `python -m pipeline.…` 执行，选择训练或仿真对应的解释器。公共配置从包所在位置解析工作区，不依赖当前终端路径，也不依赖 Windows/WSL/服务器的固定用户名。
 
 | 目录 | 用途 | 主要入口 |

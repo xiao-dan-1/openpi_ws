@@ -33,8 +33,9 @@ def read_server_metadata(host, port):
         return msgpack_numpy.unpackb(connection.recv(timeout=10))
 
 
-def verify_server_metadata(metadata, experiment, step):
-    original = json.loads((WORKSPACE / "runs/pi05_libero" / experiment / "config.json").read_text())
+def verify_server_metadata(metadata, experiment, step, *, workspace=None):
+    root = WORKSPACE if workspace is None else workspace
+    original = json.loads((root / "runs/pi05_libero" / experiment / "config.json").read_text())
     identity = metadata.get("pipeline", {})
     expected = {"experiment": experiment, "checkpoint_step": step,
                 "upstream_commit": UPSTREAM_COMMIT, "model": original["model"],

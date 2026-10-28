@@ -11,7 +11,7 @@
 | inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | openpi/.venv，CPU 客户端 |
 | eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | tools/libero-env，CPU OSMesa |
 | ops/setup_libero_env.sh | 按固定仓库中的官方依赖表安装独立仿真环境 | tools/libero-env，Python 3.8 |
-| eval/eval_libero.py | 调用官方仿真评估入口，保存视频和结构化结果 | tools/libero-env；默认 CPU OSMesa 渲染 |
+| eval/eval_libero.py | 调用官方仿真评估入口，可选保存视频和结构化结果 | tools/libero-env；默认 CPU OSMesa 渲染 |
 
 将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务会使用所选检查点的 assets/libero/norm_stats.json，并核对其 SHA256 与原训练记录一致。不会用官方完整模型配置替代当前 LoRA 结构。
 
@@ -53,7 +53,7 @@ PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.inference.check
 
 读取 episode 0、846、1692 的首/中/末帧，共九个真实观测。每次发送两路 RGB 图像、8 维状态及任务文本；期望每个响应为有限数值的 (10,7) 动作。原始数据图像不再旋转，仿真图像旋转遵循官方评估代码。
 
-产物：runs/pi05_libero/libero_smoke_01/inference_probe_119.json。记录服务身份、统计量 SHA256、各请求耗时和动作范围。第一次请求包含编译耗时，不代表稳定推理速度。此检查不比较任务成功率。
+默认在终端显示服务身份、统计量 SHA256、各请求耗时和动作范围。需要报告时加 --output runs/pi05_libero/libero_smoke_01/inference_probe_119.json。第一次请求包含编译耗时，不代表稳定推理速度。此检查不比较任务成功率。
 
 ## 3. 准备独立 LIBERO 仿真环境
 
@@ -108,7 +108,7 @@ nohup env PYTHONDONTWRITEBYTECODE=1 \
 tail -n 50 logs/check_simulation.log
 ~~~
 
-预期 PASS：一个真实任务完成 reset、加载首个初始状态、执行十个稳定动作；两路图像为非均匀的 uint8 (256,256,3)，机器人状态为有限数值的 (8,)；环境正常关闭。结果和按官方方向旋转后的 agentview.png、wrist.png 保存在 checks/output/libero_simulation/<时间>/。此检查只验证仿真，不使用学习策略，不计算任务成功率。
+预期 PASS：一个真实任务完成 reset、加载首个初始状态、执行十个稳定动作；两路图像为非均匀的 uint8 (256,256,3)，机器人状态为有限数值的 (8,)；环境正常关闭。默认只打印结果；加 --output-dir checks/output/libero_simulation/<新目录> 才保存报告和按官方方向旋转后的 agentview.png、wrist.png。此检查只验证仿真，不使用学习策略，不计算任务成功率。
 
 ## 4. 先跑一个任务集合，每任务一次
 
@@ -130,7 +130,7 @@ tail -n 50 logs/eval_libero_smoke_01_119_spatial.log
 
 包装脚本会在工作区 .cache/libero 中生成路径配置，避免 LIBERO 首次导入时交互询问；不改用户主目录中的 LIBERO 配置。
 
-输出目录：runs/pi05_libero/libero_smoke_01/eval_119/libero_spatial_<时间>/。
+默认只在终端输出评估结果，官方评估生成的中间视频放在自动清理的临时目录。需要报告和回放时，命令加 --output-dir runs/pi05_libero/libero_smoke_01/eval_119/libero_spatial_01；以下产物说明适用于显式保存模式。
 
 | 产物 | 内容 |
 |---|---|

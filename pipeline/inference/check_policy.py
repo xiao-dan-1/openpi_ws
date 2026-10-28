@@ -4,10 +4,12 @@ import io
 import json
 import os
 import time
+from pathlib import Path
 
 from pipeline.common.config import WORKSPACE
 from pipeline.inference.policy_rpc import prepare_client, read_server_metadata, verify_server_metadata
 from pipeline.common.validation import experiment_name
+from pipeline.common.reporting import emit_report
 
 
 def sample_requests(episodes):
@@ -49,6 +51,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--episodes", type=int, nargs="+", default=[0, 846, 1692])
+    parser.add_argument("--output", type=Path, help="Optionally save the inference report; otherwise print results only")
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["JAX_PLATFORMS"] = "cpu"
@@ -74,9 +77,7 @@ def main():
                         "actions_min": float(actions.min()), "actions_max": float(actions.max())})
     report = {"status": "PASS", "policy": identity, "samples_checked": len(samples), "samples": samples,
               "scope": "Real checkpoint WebSocket inference on dataset observations; not simulation or task success"}
-    output = WORKSPACE / "runs/pi05_libero" / args.exp_name / f"inference_probe_{args.step}.json"
-    output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps(report, indent=2))
+    emit_report(report, args.output)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 """Isolated single-GPU LoRA batch-capacity tests using official train functions."""
 import argparse
 import csv
-import datetime
 import functools
 import json
 import logging
@@ -16,6 +15,7 @@ import time
 import traceback
 
 from pipeline.common.config import WORKSPACE
+from pipeline.common.reporting import artifact_directory, emit_report
 
 BENCHMARK_VERSION = 3
 
@@ -226,12 +226,15 @@ def worker(args):
 
 
 def driver(args):
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = WORKSPACE / "checks/output/batch_benchmark" / stamp
-    output.mkdir(parents=True)
+    with artifact_directory(args.output_dir) as output:
+        return run_candidates(args, output)
+
+
+def run_candidates(args, output):
     summary = {"status": "RUNNING", "benchmark_version": BENCHMARK_VERSION,
                "requested_batches": args.batches, "num_workers": args.num_workers, "results": [],
-               "output_dir": str(output), "scope": "Short capacity/throughput tests, not training-quality validation"}
+               "output_dir": str(output) if args.output_dir is not None else None,
+               "scope": "Short capacity/throughput tests, not training-quality validation"}
     previous_pid = None
     print(f"Running batch benchmark version {BENCHMARK_VERSION}", flush=True)
     try:
@@ -289,7 +292,9 @@ def driver(args):
             result.update(exit_code=process.returncode, num_workers=args.num_workers,
                           sampled_process_memory_peak_mib=peak_mib or None,
                           system_available_before_mib=ram_before, system_available_min_mib=ram_min,
-                          log_path=str(log_path))
+                          log_path=str(log_path) if args.output_dir is not None else None)
+            if args.output_dir is None and result.get("status") != "PASS":
+                result["worker_log_tail"] = log_path.read_text(errors="replace")[-4000:]
             save_json(result_path, result)
             summary["results"].append(result)
             save_json(output / "summary.json", summary)
@@ -306,7 +311,7 @@ def driver(args):
     finally:
         summary["passed_batches"] = [r["batch_size"] for r in summary["results"] if r["status"] == "PASS"]
         save_json(output / "summary.json", summary)
-        print(json.dumps({key: value for key, value in summary.items() if key != "results"}, indent=2), flush=True)
+        emit_report(summary)
     return 0 if summary["status"] == "COMPLETED" else 1
 
 
@@ -320,6 +325,7 @@ def main():
     parser.add_argument("--cache-dir")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--plan", action="store_true", help="Print test plan without GPU access or loading model")
+    parser.add_argument("--output-dir", type=Path, help="Optionally keep candidate reports/logs; otherwise use temporary files")
     parser.add_argument("--worker-output", help=argparse.SUPPRESS)
     parser.add_argument("--batch-size", type=int, default=1, help=argparse.SUPPRESS)
     args = parser.parse_args()

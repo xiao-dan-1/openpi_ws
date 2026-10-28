@@ -1,6 +1,5 @@
 """Real images over official WebSocket transport with a MOCK policy, no model."""
 import argparse
-import datetime
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,7 @@ import time
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE))
+from pipeline.common.reporting import artifact_directory, emit_report
 
 
 def serve(port, metadata_file):
@@ -37,19 +37,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", type=int)
     parser.add_argument("--metadata")
+    parser.add_argument("--output-dir", type=Path, help="Optionally keep reports and mock-server files; otherwise use temporary files")
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     if args.server is not None:
         serve(args.server, args.metadata)
         return
+    with artifact_directory(args.output_dir) as output:
+        report = run_check(output)
+        emit_report(report, output / "result.json" if args.output_dir is not None else None)
+
+
+def run_check(output):
     import numpy as np
     from pipeline.inference import policy_rpc
     from pipeline.common.config import UPSTREAM_COMMIT
     from pipeline.inference.check_policy import sample_requests
     from openpi_client.websocket_client_policy import WebsocketClientPolicy
 
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    output = WORKSPACE / "checks/output" / f"policy_transport_{stamp}"
     run_dir = output / "runs/pi05_libero/transport_test"
     run_dir.mkdir(parents=True)
     model = {"test_only": True}
@@ -74,12 +79,12 @@ def main():
                     break
                 except OSError:
                     if process.poll() is not None or time.monotonic() > deadline:
-                        raise RuntimeError(f"Mock policy server did not start; inspect {output}")
+                        raise RuntimeError("Mock policy server did not start:\n" +
+                                           (output / "mock_server.log").read_text(errors="replace")[-4000:])
                     time.sleep(0.2)
-            policy_rpc.WORKSPACE = output
-            policy_rpc.verify_server_metadata(received, "transport_test", 119)
+            policy_rpc.verify_server_metadata(received, "transport_test", 119, workspace=output)
             try:
-                policy_rpc.verify_server_metadata(received, "transport_test", 99)
+                policy_rpc.verify_server_metadata(received, "transport_test", 99, workspace=output)
             except ValueError:
                 pass
             else:
@@ -102,8 +107,7 @@ def main():
     report = {"status": "PASS", "real_observations_checked": count,
               "wrong_checkpoint_rejected": True,
               "scope": "Official WebSocket server/client and real dataset images with MOCK policy; no checkpoint/model/GPU/simulator"}
-    (output / "result.json").write_text(json.dumps(report, indent=2))
-    print(json.dumps(report, indent=2))
+    return report
 
 
 if __name__ == "__main__":

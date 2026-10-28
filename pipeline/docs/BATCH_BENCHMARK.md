@@ -24,6 +24,7 @@
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   openpi/.venv/bin/python -u -m pipeline.train.benchmark_batch \
   --gpu GPU_ID --batches 16 --num-workers 2 \
+  --output-dir checks/output/batch_benchmark/workers2_01 \
   --warmup-steps 3 --measure-steps 10 \
   >> logs/benchmark_workers2.log 2>&1 < /dev/null &
 ~~~
@@ -46,6 +47,7 @@ nvidia-smi --query-gpu=index,uuid,memory.used,utilization.gpu --format=csv
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   openpi/.venv/bin/python -u -m pipeline.train.benchmark_batch \
   --gpu GPU_ID --batches 1 2 4 8 \
+  --output-dir checks/output/batch_benchmark/capacity_01 \
   --warmup-steps 3 --measure-steps 20 \
   >> logs/benchmark_batch.log 2>&1 < /dev/null &
 ~~~
@@ -60,7 +62,7 @@ tail -n 50 -f logs/benchmark_batch.log
 
 ## 输出与指标
 
-目录：checks/output/batch_benchmark/<时间>/。
+默认在终端显示全部结果，子进程报告和日志使用临时目录并在退出时清理。需要保留时加 --output-dir checks/output/batch_benchmark/<新目录>；以下文件说明适用于显式保存模式。
 
 | 文件/字段 | 含义 |
 |---|---|
