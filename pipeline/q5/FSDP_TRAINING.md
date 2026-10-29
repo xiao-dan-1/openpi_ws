@@ -21,7 +21,7 @@ unzip -o q5_dual_training_v1.zip
 env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.check_config
 ```
 
-更新包含当前 Q5 代码及依赖、CPU 回归测试与说明，不包含 OpenPI 源码、环境、数据、权重或检查点。前提是已经安装结构化 pipeline 和 v2 的 50/5/10 数据与训练统计。不会清理服务器已有文件。
+该包包含打包时的Q5代码及依赖、CPU回归测试与说明，不包含OpenPI源码、环境、数据、权重或检查点。后发的torchvision警告过滤需另装q5_video_warning_filter_v1.zip，或使用当前Git代码。前提是已经安装结构化pipeline和v2的50/5/10数据与训练统计。不会清理服务器已有文件。
 
 代码指纹发生变化，旧实验不要绕过检查强行恢复。本次验收从新的实验名开始；同一实验保存和恢复之间不要更新代码。
 
@@ -29,7 +29,9 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.check_co
 
 以下使用2026-10-29服务器验收的物理卡1、2、全局 batch 16、fraction 0.75配置。再次执行前确认1、2号卡已经分配给你；这里不会自动抢卡或停止其他进程。单卡的参数和训练策略保持原样。
 
-第一次跑 100 步：
+以下命令保留实际验收的实验名用于对照；该实验已达到120步，不能原样再次运行首次100步或恢复至120步命令。新一轮验收应统一替换实验名和日志名，已完成实验若继续则累计步数必须大于120。
+
+第一次跑 100 步（历史验收命令）：
 
 ```bash
 cd /mnt/sda/xd/openpi_ws

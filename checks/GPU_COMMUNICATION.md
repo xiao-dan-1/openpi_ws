@@ -44,7 +44,7 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_commun
 
 ## 如何据此决策
 
-先比较同NUMA与跨NUMA卡对的16/64MiB结果和波动，再估计FSDP所需频繁AllGather/ReduceScatter的通信成本。微基准能排除明显通信异常，但不能承诺完整FSDP训练速度；最终仍需固定模型/全局batch的真实短测。当前不修改Q5单卡入口或冻结规则。
+先比较同NUMA与跨NUMA卡对的16/64MiB结果和波动，再估计FSDP所需频繁AllGather/ReduceScatter的通信成本。微基准能排除明显通信异常，但不能承诺完整FSDP训练速度。后续真实Q5双卡benchmark及100→120步保存恢复已验收，见[双卡记录](../pipeline/q5/FSDP_TRAINING.md)。通信测试本身不修改训练入口或冻结规则。
 
 参考：
 

@@ -15,7 +15,7 @@ unzip -o q5_dual_training_v1.zip
 
 包含独立benchmark_fsdp入口、显式多GPU支持、通信查询辅助和CPU测试。正式train也已支持`--gpus`和`--fsdp-devices`，check_model及evaluate_validation保持单卡。本benchmark根据本次命令设置1或2卡分片。训练统计和75%默认显存配置保持原值。不要在旧训练实验中绕过代码指纹校验恢复；旧实验若需resume应保留其原代码。
 
-显存参数更新包为 `q5_memory_fraction_cli_v1.zip`，在现有FSDP测试包之上覆盖安装。新版增加 `--memory-fraction`，默认仍是0.75，取消运行环境和测试报告中写死的比例。为两张24GiB卡指定0.65时，每张池预算约15.6GiB；这不是实际活跃内存或整个进程硬上限。示例：
+当前代码和双卡更新包已包含`--memory-fraction`，默认0.75；`q5_memory_fraction_cli_v1.zip`只是早期单独升级显存参数的历史包，不要再覆盖较新的双卡训练代码。为两张24GiB卡指定0.65时，每张池预算约15.6GiB；这不是实际活跃内存或整个进程硬上限。下面是已失败配置的复现示例，不是建议的训练启动参数：
 
 ```bash
 env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmark_fsdp \

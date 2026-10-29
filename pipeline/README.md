@@ -1,4 +1,8 @@
-# 从 pi05_base 训练自己的 pi05_libero
+# OpenPI 工作区训练与评估管线
+
+项目同时包含LIBERO和Q5管线。Q5当前为38维绝对关节目标、训练/验证/测试50/5/10轨迹，支持单卡及双卡FSDP；截至2026-10-29已验收双卡batch16、fraction0.75的100→120步保存恢复和单卡验证集推理，正式长程训练计划尚未确定。配置与操作见[Q5说明](q5/README.md)、[双卡保存恢复记录](q5/FSDP_TRAINING.md)、[当前Q5计划](docs/Q5_TRAINING_PLAN.md)。
+
+以下训练配置、命令和历史成绩主要描述LIBERO；不作为Q5的配置或效果结论。
 
 目标：学习统计量生成、LoRA 微调、检查点保存及恢复，随后接入 LIBERO 仿真评估。
 
@@ -21,6 +25,7 @@
 | 目录 | 用途 | 主要入口 |
 |---|---|---|
 | `train/` | 训练、恢复与 batch 容量测试 | `pipeline.train.run`、`pipeline.train.benchmark_batch` |
+| `q5/` | Q5 38维配置、单/双卡训练、恢复与验证集推理 | `pipeline.q5.train`、`pipeline.q5.check_config`、`pipeline.q5.benchmark_fsdp`、`pipeline.q5.evaluate_validation` |
 | `inference/` | 策略服务、客户端通信与推理检查 | `pipeline.inference.serve_policy`、`pipeline.inference.local_docker_serve`、`pipeline.inference.check_policy` |
 | `eval/` | LIBERO 仿真检查与评估 | `pipeline.eval.check_simulation`、`pipeline.eval.eval_libero` |
 | `data/` | 归一化统计与训练输入检查 | `pipeline.data.compute_norm_stats`、`pipeline.data.check_config` |

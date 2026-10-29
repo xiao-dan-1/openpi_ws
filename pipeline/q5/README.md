@@ -2,7 +2,7 @@
 
 正式训练入口现支持双卡 `--gpus 2,3 --fsdp-devices 2`，全局 batch 必须能被卡数整除；原单卡 `--gpu` 用法保留。保存恢复的服务器命令、运行记录及验收标准见 [双卡训练与保存恢复](FSDP_TRAINING.md)。模型、冻结和学习率默认配置不变，完整模型 GPU 验收由服务器执行。
 
-沿用 LIBERO 的 π0.5 LoRA 冻结规则，视觉编码器继续参与训练；冻结视觉编码器的对照后续再做。所有完整模型加载、推理和梯度更新均在服务器执行，本机只做数据处理和 CPU 检查。
+沿用 LIBERO 的 π0.5 LoRA 冻结规则，视觉编码器继续参与训练；冻结视觉编码器的对照后续再做。当前工作流在服务器执行完整模型加载、推理和梯度更新，本机进行数据处理和CPU回归。历史16GB本机容量尝试见下文，不属于已通过的本机训练配置。
 
 Q5的GPU入口支持显式 `--memory-fraction`，默认0.75。覆盖范围为train、check_model、evaluate_validation和独立benchmark_fsdp；双卡时是对每卡总显存分别设置，并非两卡共享一份预算。该CLI值优先于启动环境中的两种fraction变量，初始化时统一设置，避免被写死常量覆盖。报告/训练清单记录实际fraction及预分配/allocator设置。本次没有调整是否预分配，LIBERO入口仍使用原0.75设置。
 
@@ -34,7 +34,11 @@ CPU检查会审计真实基础检查点全部元数据路径。服务器训练�
 
 ## 更新部署
 
-服务器已有v1/PyAV/基线修复版时，上传 q5_validation_update_v1.zip 到工作区：
+当前服务器已具备结构化pipeline、v2数据和训练统计，代码来自双卡更新包及警告过滤补丁。日常更新以当前Git代码为准；双卡入口和验收命令见[FSDP_TRAINING.md](FSDP_TRAINING.md)。`q5_dual_training_v1.zip`不包含后发的`q5_video_warning_filter_v1.zip`，旧包内文档也只是打包时的快照。
+
+以下仅为尚无v2数据时的历史数据迁移流程；不要在已更新的服务器上用旧包覆盖当前代码。若需从旧环境迁移，应先导入数据，再部署当前结构化代码。
+
+历史v1/PyAV/基线修复版导入v2数据的包为q5_validation_update_v1.zip：
 
 ```bash
 cd /mnt/sda/xd/openpi_ws
@@ -84,13 +88,13 @@ openpi/.venv/bin/python -B -u -m pipeline.q5.check_model \
   --gpu 0 --updates 3 --output-dir checks/output/q5/model_updates_v2
 ```
 
-三步越过首步零学习率。检查loss/梯度有限，每个参数张量最多分布抽查32个元素，确认可训练组件更新、冻结参数抽样值不变；该抽样不等于全张量逐值证明。完整参数清单另由参数树报告提供。保存恢复另用smoke验收。
+三步检查用于观察连续真实更新。当前官方余弦调度初始学习率为peak_lr/(warmup_steps+1)，不是零；至少三步是检查入口的要求。检查loss/梯度有限，每个参数张量最多分布抽查32个元素，确认可训练组件更新、冻结参数抽样值不变；该抽样不等于全张量逐值证明。完整参数清单另由参数树报告提供。保存恢复另用smoke验收。
 
 三步检查器的训练JIT必须与官方trainer保持一致，包括 donate_argnums=(1,)、输入/输出sharding和mesh上下文。donation允许新训练状态复用已不再使用的旧状态显存。初版检查器漏了这一设置，在本机16GB卡首次更新时出现输入/输出内存超限和OOM，不能用那次结果直接判定正式训练的最低显存。当前已对齐官方设置并释放单独前向检查的编译缓存；CPU小型回归验证了旧状态buffer被复用，服务器完整模型三步更新也已通过。
 
 后续本机16GB重测仍在真实更新阶段OOM；完整加载和前向通过。修复保证检查器与官方内存处理一致，不保证16GB能容纳当前训练配置。用户提供的24GB服务器结果已验证更新、单卡保存恢复，以及双卡FSDP的100→120步保存恢复。
 
-指定 --output-dir 后，失败输出目录保留 INCOMPLETE 记录。保留报告重测时请换新目录，例如 --output-dir checks/output/q5/model_updates_v2_retry1；不保存报告时可直接重新执行。已有服务器版本可叠加 q5_check_model_memory_fix_v1.zip；不改变模型、冻结、学习率、batch或显存预留比例。
+指定 --output-dir 后，失败输出目录保留 INCOMPLETE 记录。保留报告重测时请换新目录，例如 --output-dir checks/output/q5/model_updates_v2_retry1；不保存报告时可直接重新执行。早期q5_check_model_memory_fix_v1.zip是donation修复的历史包，当前代码已包含修复，不应再用旧包覆盖新入口。
 
 ## 学习率和样本预算
 
@@ -106,7 +110,9 @@ AdamW、梯度裁剪1.0、无EMA/W&B/梯度累积、seed42。batch1/workers0仅�
 
 finetune默认首段全在预热，入口要求显式 --continue-after-segment，否则报错。--steps是累计执行上限，--schedule-steps是调度长度，--warmup-steps可显式指定。启动时打印窗口样本预算及相对训练起点比例。1000步batch1约处理1000个窗口样本，相对17,382个起点约5.75%，不等于独立起点覆盖率，不适合判断最终效果。
 
-短跑保存：
+以下是保留的单卡用法示例，不代表当前双卡验收配置；已执行的batch16双卡命令与结果见[FSDP_TRAINING.md](FSDP_TRAINING.md)。正式总预算和调度尚未选定，下面finetune命令只是默认配置的用法。
+
+单卡短跑保存示例：
 
 ```bash
 mkdir -p logs
