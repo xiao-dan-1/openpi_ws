@@ -30,7 +30,7 @@ class PipelineEntrypointsTest(unittest.TestCase):
             "pipeline.inference.check_policy", "pipeline.eval.eval_libero",
             "pipeline.eval.check_simulation", "pipeline.data.compute_norm_stats",
             "pipeline.data.check_config",
-            "pipeline.q5.prepare_data", "pipeline.q5.check_config", "pipeline.q5.check_model", "pipeline.q5.evaluate_validation", "pipeline.q5.train",
+            "pipeline.q5.prepare_data", "pipeline.q5.check_config", "pipeline.q5.check_model", "pipeline.q5.evaluate_validation", "pipeline.q5.train", "pipeline.q5.benchmark_fsdp",
         ]
         with tempfile.TemporaryDirectory() as empty:
             env = dict(os.environ, PYTHONPATH=str(WORKSPACE))
@@ -66,6 +66,8 @@ class PipelineEntrypointsTest(unittest.TestCase):
             ("pipeline.q5.train", ["--gpu", "0", "--exp-name", "demo", "--batch-size", "0"]),
             ("pipeline.q5.train", ["--gpu", "0", "--exp-name", "demo", "--profile", "finetune", "--steps", "1000"]),
             ("pipeline.q5.check_model", ["--gpu", "0", "--updates", "1"]),
+            ("pipeline.q5.benchmark_fsdp", ["--gpus", "0", "--fsdp-devices", "1", "--num-workers", "-1"]),
+            ("pipeline.q5.benchmark_fsdp", ["--gpus", "0", "--fsdp-devices", "1", "--timing-mode", "unknown"]),
             ("pipeline.inference.serve_policy", ["--gpu", "0", "--exp-name", "demo", "--step", "-1"]),
             ("pipeline.inference.local_docker_serve", ["--memory-fraction", "1"]),
             ("pipeline.eval.eval_libero", ["--exp-name", "demo", "--step", "1", "--trials", "0"]),

@@ -8,10 +8,64 @@ import tempfile
 import unittest
 from unittest import mock
 
-from pipeline.q5.benchmark_fsdp import gpu_selectors
+from pipeline.q5.benchmark_fsdp import checked_metrics, gpu_selectors, measure_throughput, parse_args
 
 
 class FsdpProbeTests(unittest.TestCase):
+    def test_worker_and_timing_options_preserve_the_baseline(self):
+        arguments = ["--gpus", "0", "--fsdp-devices", "1"]
+        baseline = parse_args(arguments)
+        self.assertEqual(baseline.num_workers, 0)
+        self.assertEqual(baseline.timing_mode, "diagnostic")
+        configured = parse_args(arguments + ["--num-workers", "4", "--timing-mode", "throughput"])
+        self.assertEqual(configured.num_workers, 4)
+        self.assertEqual(configured.timing_mode, "throughput")
+
+    def test_throughput_waits_at_both_boundaries_and_keeps_metric_reads_outside_timing(self):
+        import jax
+        import jax.numpy as jnp
+        events = []
+        original_wait = jax.block_until_ready
+        original_checked = checked_metrics
+
+        def wait(value):
+            events.append("wait")
+            return original_wait(value)
+
+        def clock():
+            events.append("clock")
+            return 10.0 if events.count("clock") == 1 else 12.0
+
+        @jax.jit
+        def compiled(state, batch):
+            return state + batch, {"loss": state * 0.5, "grad_norm": jnp.ones(())}
+
+        def update(state, batch):
+            events.append("update")
+            return compiled(state, batch)
+
+        def checked(info):
+            events.append("read_metrics")
+            return original_checked(info)
+
+        with mock.patch("jax.block_until_ready", side_effect=wait), \
+             mock.patch("pipeline.q5.benchmark_fsdp.time.perf_counter", side_effect=clock), \
+             mock.patch("pipeline.q5.benchmark_fsdp.checked_metrics", side_effect=checked):
+            state, metrics, seconds = measure_throughput(
+                jnp.array(0.0), iter([jnp.array(2.0), jnp.array(3.0)]), update, 2)
+        self.assertEqual(float(state), 5.0)
+        self.assertEqual(seconds, 2.0)
+        self.assertEqual([row["loss"] for row in metrics], [0.0, 1.0])
+        self.assertEqual(events, ["wait", "clock", "update", "update", "wait", "clock",
+                                  "read_metrics", "read_metrics"])
+
+    def test_nonfinite_metrics_fail_instead_of_reporting_throughput_success(self):
+        import jax.numpy as jnp
+        for invalid in [float("nan"), float("inf")]:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "Non-finite"):
+                measure_throughput(jnp.array(0), iter([None, None]),
+                                   lambda state, batch: (state + 1, {"loss": jnp.array(invalid)}), 2)
+
     def test_gpu_selection_is_explicit_and_bounded(self):
         self.assertEqual(gpu_selectors("2,3"), "2,3")
         self.assertEqual(gpu_selectors("2"), "2")

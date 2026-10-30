@@ -69,6 +69,30 @@ CPU检查：
 
 检查包括三集合隔离、train/validation真实样本、全状态token未截断、同一训练统计下的归一化、PyAV/图像掩码、无delta转换、数值/时间/QC记录及真实基础权重元数据冻结。默认只在终端显示结果；需要报告时加 --output checks/output/q5/check_config.json，另保存同目录 check_config_base_parameter_metadata.json。
 
+## 数据加载与连续吞吐测试
+
+第一阶段通过官方 DataLoader 测试并行加载，不修改 OpenPI 子模块。`pipeline.q5.benchmark_fsdp` 新增 `--num-workers` 和 `--timing-mode`；默认仍为 workers=0、diagnostic，保留已有容量测试的计时方式。正式训练入口已有 `--num-workers` 参数。
+
+- `diagnostic`：每批数据和每次更新同步，分别报告数据准备（包括解码、变换和传输等待）及计算时间。数据时间占比不能当作正式训练的 GPU 空闲比例。
+- `throughput`：编译与预热完成后连续执行测量窗口，仅在窗口首尾同步，不逐步读取 GPU 指标或打印进度，允许 CPU 加载、设备传输与 GPU 计算重叠。报告 `measurement_seconds`、`mean_step_seconds`、`total_samples_per_second`，每步 loss/grad 在计时结束后读取并校验。
+
+两种模式分别报告 `timing_mode`、`num_workers` 及实际 DataLoader 的预取与持久 worker 设置。多进程加载沿用上游的 spawn、persistent_workers 和 PyTorch 默认预取；默认不另加预取队列。主机数据准备放在 CPU worker，模型仍在指定 GPU 上运行。
+
+在服务器同一张 GPU、相同 batch/fraction 下，分别将下面的 `--num-workers` 替换为 0、2、4，再根据 CPU、RAM 和共享内存余量测试 8。使用较长测量窗口降低预取队列已填满对短测的影响；每组单独启动进程，比较 throughput 模式的结果。以下采用当前用户服务器已短测通过的单卡 batch16、fraction0.95：
+
+```bash
+./.venv/bin/python -B -u -m pipeline.q5.benchmark_fsdp \
+  --gpus 0 --fsdp-devices 1 --memory-fraction 0.95 \
+  --batch-size 16 --num-workers 2 \
+  --timing-mode throughput --warmup-steps 5 --measure-steps 100
+```
+
+如需分段诊断，将 `--timing-mode` 改为 `diagnostic`。默认结果只在终端显示，显式 `--output <新JSON文件>` 才保存报告，不保存训练检查点。两种计时均排除初始化/编译和预热，连续吞吐还排除逐步日志与指标回传，不代表含检查点保存的整场训练耗时。模型、统计、采样和训练更新调用沿用原实现。
+
+先验收真实服务器上的多进程吞吐，再决定是否增加图像缓存或调整解码后端。当前 PyAV 视频路径存在随机取帧时重复解码的成本；本机同批数据抽查 3 个视频的关键帧间隔为 250 帧，不能据此代替服务器文件核验或各阶段耗时分析。
+
+2026-10-30 本地验证：16 项 CPU 回归通过，包括连续吞吐仅在窗口首尾同步、计时结束后读取指标、拒绝非有限指标和 CLI 参数校验。另用真实训练副本在 CPU 上分别运行 workers=0、2，各读取两批 batch=2，比较全部输出张量的 dtype、形状和字节哈希，结果一致；workers=2 的实际 prefetch_factor=2、persistent_workers=True。服务器 GPU 连续吞吐仍待执行上述命令验收。
+
 ## 服务器完整模型检查
 
 等分配的GPU空闲后，检查完整权重、完整参数树及真实前向：
