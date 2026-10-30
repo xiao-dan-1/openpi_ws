@@ -8,7 +8,7 @@ from pipeline.common.config import WORKSPACE, LOCAL_REPO_ID, build_config, prepa
 
 
 def main():
-    prepare_environment(cpu=True, cache_dir=str(Path.home() / ".cache/huggingface/datasets"))
+    prepare_environment(cpu=True)
     import jax
     import numpy as np
     import pyarrow as pa

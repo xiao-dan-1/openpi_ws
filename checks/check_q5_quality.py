@@ -30,33 +30,96 @@ def distribution(values):
 def write_csv(path, rows):
     if rows:
         with path.open("w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+            writer = csv.DictWriter(f, fieldnames=list(dict.fromkeys(k for row in rows for k in row)))
             writer.writeheader()
             writer.writerows(rows)
 
 
-def source_qc(root):
+def source_qc(root, episode_ids):
     """Summarize converter provenance; these counters are not raw-bag revalidation."""
     rows = []
     topics = {}
+    total_keys = ("output_images", "source_images", "no_state", "no_action", "stale_state",
+                  "stale_action", "disorder", "age_a_future")
+    max_keys = ("age_s_max", "age_a_max", "back_max")
+    min_keys = ("age_s_min", "age_a_min")
     for path in sorted((root / "meta/timing").glob("episode_*.json")):
         d = json.loads(path.read_text())
         qc = d.get("qc", {})
         row = {"episode": int(path.stem.split("_")[-1]),
-               "output_images": len(d.get("relative_image_stamps", [])),
-               "source_images": qc.get("n_img", 0)}
-        for key in ["no_state", "no_action", "stale_state", "stale_action", "disorder", "age_a_future"]:
-            row[key] = qc.get(key, 0)
-        for key in ["age_s_min", "age_s_max", "age_a_min", "age_a_max", "back_max"]:
-            row[key] = qc.get(key, 0)
+               "output_images": len(d["relative_image_stamps"]) if "relative_image_stamps" in d else None,
+               "source_images": qc.get("n_img")}
+        for key in (*total_keys[2:], *max_keys, *min_keys):
+            row[key] = qc.get(key)
         rows.append(row)
         for topic, values in qc.get("gaps", {}).items():
             topics.setdefault(topic, []).append(values)
-    return dict(provenance="Counters from converter timing sidecars; raw bags were not re-read.",
-                totals={k: sum(r[k] for r in rows) for k in ["output_images", "source_images", "no_state", "no_action", "stale_state", "stale_action", "disorder", "age_a_future"]},
-                maxima={k: max((r[k] for r in rows), default=None) for k in ["age_s_max", "age_a_max", "back_max"]},
-                minima={k: min((r[k] for r in rows), default=None) for k in ["age_s_min", "age_a_min"]},
+    expected, found = set(episode_ids), {r["episode"] for r in rows}
+    selected = [r for r in rows if r["episode"] in expected]
+    observed = {k: [r[k] for r in selected if isinstance(r[k], (int, float)) and np.isfinite(r[k])]
+                for k in (*total_keys, *max_keys, *min_keys)}
+    # Aggregate values describe the entire dataset only with complete coverage.
+    def aggregate(key, operation):
+        values = observed[key]
+        return operation(values) if values and len(values) == len(expected) else None
+    return dict(provenance="Counters from converter timing sidecars; raw bags were not re-read. Null aggregates mean incomplete coverage.",
+                coverage=dict(expected_episodes=len(expected), sidecars_found=len(found & expected),
+                              missing_episode_ids=sorted(expected - found), unexpected_episode_ids=sorted(found - expected),
+                              observed_episodes={k: len(v) for k, v in observed.items()}),
+                totals={k: aggregate(k, sum) for k in total_keys},
+                maxima={k: aggregate(k, max) for k in max_keys},
+                minima={k: aggregate(k, min) for k in min_keys},
                 topic_gap_raw_values=topics, episodes=rows)
+
+
+def portable_json(value, errors, path="report"):
+    """Keep failed audits portable and make every nonfinite result explicit."""
+    if isinstance(value, float) and not np.isfinite(value):
+        errors.append(f"{path}: nonfinite value")
+        return None
+    if isinstance(value, dict):
+        return {k: portable_json(v, errors, f"{path}.{k}") for k, v in value.items()}
+    if isinstance(value, list):
+        return [portable_json(v, errors, f"{path}[{i}]") for i, v in enumerate(value)]
+    return value
+
+
+def check_stored_stats(eid, key, stored, values, errors, mismatches):
+    """Validate the Q5 vector statistics and singleton frame count before comparing."""
+    n = len(values)
+    computed = {}
+    if values.shape == (n, 38) and n and np.isfinite(values).all():
+        computed = {"min": values.min(0), "max": values.max(0),
+                    "mean": values.mean(0), "std": values.std(0)}
+    if not isinstance(stored, dict):
+        stored = {}
+    for stat in ["min", "max", "mean", "std", "count"]:
+        label = f"episode {eid}: stored {key}.{stat}"
+        if stat not in stored:
+            errors.append(f"{label} missing")
+            continue
+        try:
+            value = np.asarray(stored[stat], dtype=float)
+        except (TypeError, ValueError):
+            errors.append(f"{label} invalid numeric value")
+            continue
+        expected_shape = (1,) if stat == "count" else (38,)
+        if value.shape != expected_shape:
+            errors.append(f"{label} shape {value.shape} vs {expected_shape}")
+            continue
+        if not np.isfinite(value).all():
+            errors.append(f"{label} NaN/Inf")
+            continue
+        if stat == "count":
+            if value[0] != n:
+                errors.append(f"episode {eid}: stats count {key}")
+            continue
+        if stat not in computed or not np.isfinite(computed[stat]).all():
+            continue
+        if not np.allclose(value, computed[stat], atol=2e-5, rtol=2e-4):
+            mismatches.append(dict(episode=eid, feature=key, stat=stat,
+                                   max_abs_error=float(np.max(np.abs(value - computed[stat])))))
+            errors.append(f"{label} differs from data")
 
 
 def audit(root, out):
@@ -65,7 +128,7 @@ def audit(root, out):
     episodes = jsonl(root / "meta/episodes.jsonl")
     tasks = jsonl(root / "meta/tasks.jsonl")
     stats_rows = jsonl(root / "meta/episodes_stats.jsonl")
-    stored_stats = {e["episode_index"]: e["stats"] for e in stats_rows}
+    stored_stats = {e["episode_index"]: e.get("stats", {}) for e in stats_rows}
     fps = info["fps"]
     errors, warnings, rows, joints, jumps = [], [], [], [], []
     arrays = {"action": [], "observation.state": []}
@@ -83,6 +146,9 @@ def audit(root, out):
     require(len(episodes) == info["total_episodes"], "episode metadata count")
     require(len(tasks) == info["total_tasks"], "task metadata count")
     require(len(stats_rows) == len(episodes), "episode stats count")
+    stats_ids = [e["episode_index"] for e in stats_rows]
+    require(len(stats_ids) == len(set(stats_ids)), "episode stats duplicate indices")
+    require(set(stats_ids) == {e["episode_index"] for e in episodes}, "episode stats indices missing or unexpected")
     require([e["episode_index"] for e in episodes] == list(range(info["total_episodes"])),
             "episode indices missing, duplicated, or unordered")
     task_map = {t["task_index"]: t["task"] for t in tasks}
@@ -107,9 +173,10 @@ def audit(root, out):
         require({task_map[t] for t in tids if t in task_map} == set(episode["tasks"]), f"episode {eid}: task mismatch")
         all_indices.extend(table["index"].to_pylist())
         ts = table["timestamp"].to_numpy().astype(float)
+        require(np.isfinite(ts).all(), f"episode {eid}: timestamp NaN/Inf")
         require(np.all(np.diff(ts) > 0), f"episode {eid}: nonmonotonic timestamps")
-        timestamp_error = float(np.max(np.abs(ts - np.arange(n) / fps)))
-        require(timestamp_error < 1e-4, f"episode {eid}: timestamps vs nominal FPS")
+        timestamp_error = float(np.max(np.abs(ts - np.arange(n) / fps))) if n else None
+        require(timestamp_error is not None and timestamp_error < 1e-4, f"episode {eid}: timestamps vs nominal FPS")
         row = dict(episode=eid, frames=n, duration_s=n / fps, timestamp_max_error_s=timestamp_error)
         vals = {}
         for key in arrays:
@@ -118,6 +185,11 @@ def audit(root, out):
             require(np.isfinite(a).all(), f"episode {eid}: {key} NaN/Inf")
             require(str(table.schema.field(key).type) == "fixed_size_list<element: float>[38]",
                     f"episode {eid}: {key} dtype")
+            episode_stats = stored_stats.get(eid, {})
+            stored = episode_stats.get(key, {}) if isinstance(episode_stats, dict) else {}
+            check_stored_stats(eid, key, stored, a, errors, stats_mismatches)
+            if a.shape != (n, 38) or n < 2 or not np.isfinite(a).all():
+                continue
             arrays[key].append(a)
             vals[key] = a
             delta = np.diff(a, axis=0)
@@ -131,16 +203,9 @@ def audit(root, out):
                                   joint=info["features"][key]["names"][dim],
                                   before=float(a[frame, dim]), after=float(a[frame + 1, dim]),
                                   abs_step=float(abs(delta[frame, dim]))))
-            stored = stored_stats.get(eid, {}).get(key, {})
-            for stat, computed in [("min", a.min(0)), ("max", a.max(0)),
-                                   ("mean", a.mean(0)), ("std", a.std(0))]:
-                if stat in stored and not np.allclose(stored[stat], computed, atol=2e-5, rtol=2e-4):
-                    stats_mismatches.append(dict(episode=eid, feature=key, stat=stat,
-                                                max_abs_error=float(np.max(np.abs(np.asarray(stored[stat]) - computed)))))
-                    errors.append(f"episode {eid}: stored {key}.{stat} differs from data")
-            if "count" in stored:
-                require(np.all(np.asarray(stored["count"]) == n), f"episode {eid}: stats count {key}")
         for name, sl in groups.items():
+            if len(vals) != len(arrays):
+                break
             state, action = vals["observation.state"][:, sl], vals["action"][:, sl]
             row[f"{name}_state_range_max"] = float(np.ptp(state, axis=0).max())
             row[f"{name}_action_state_mae"] = float(np.abs(state - action).mean())
@@ -156,7 +221,8 @@ def audit(root, out):
             timing_keys.update(timing.keys())
             stamps = np.asarray(timing.get("relative_image_stamps", []), dtype=float)
             require(len(stamps) == n, f"episode {eid}: source image timestamp count")
-            if len(stamps) == n:
+            require(np.isfinite(stamps).all(), f"episode {eid}: source time invalid")
+            if len(stamps) == n and n > 1:
                 dt = np.diff(stamps)
                 require(np.isfinite(stamps).all() and np.all(dt > 0), f"episode {eid}: source time invalid")
                 row.update(source_dt_min_s=float(dt.min()), source_dt_max_s=float(dt.max()),
@@ -199,7 +265,7 @@ def audit(root, out):
         require(decoded == n, f"episode {eid}: decoded video {decoded} vs data {n}")
         valid_pts = np.array([p for p in pts if p is not None])
         require(len(valid_pts) == n, f"episode {eid}: video missing PTS")
-        if len(valid_pts) == n:
+        if len(valid_pts) == n and n:
             require(np.all(np.diff(valid_pts) > 0), f"episode {eid}: nonmonotonic video PTS")
             row["video_pts_max_error_s"] = float(np.max(np.abs(valid_pts - ts)))
             require(row["video_pts_max_error_s"] < 1 / fps / 2, f"episode {eid}: video PTS/data misalignment")
@@ -256,7 +322,7 @@ def audit(root, out):
             draw.text((x + 5, y + 3), f"episode {eid:02d} - final frame", fill="white")
         sheet.save(out / "all_final_frames.jpg", quality=92)
     report = dict(status="FAIL" if errors else "PASS", root=str(root), metadata=info, errors=errors, warnings=warnings,
-                  source_qc=source_qc(root),
+                  source_qc=source_qc(root, [e["episode_index"] for e in episodes]),
                   episodes_checked=len(rows), decoded_video_frames=sum(r["decoded_video_frames"] for r in rows),
                   total_duration_s=info["total_frames"] / fps, duration_s=distribution([r["duration_s"] for r in rows]),
                   schema_variants=len(schema_types), schemas=sorted(schema_types),
@@ -274,7 +340,10 @@ def audit(root, out):
                                "Video PTS and source image timestamps checked; raw joint/command timestamps unavailable unless recorded in timing sidecars.",
                                "Visual task success requires human/video review; automated metrics do not certify success.",
                                "Exact repeats and brightness use 160x120 grayscale decoded thumbnails."])
-    (out / "quality_metrics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report = portable_json(report, errors)
+    report["errors"] = errors
+    report["status"] = "FAIL" if errors else "PASS"
+    (out / "quality_metrics.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     write_csv(out / "episodes.csv", rows)
     write_csv(out / "joint_statistics.csv", joints)
     write_csv(out / "largest_steps.csv", sorted(jumps, key=lambda j: j["abs_step"], reverse=True))
@@ -305,7 +374,7 @@ def main(argv=None):
     marker.unlink()
     print(json.dumps({k: report[k] for k in ["status", "episodes_checked", "decoded_video_frames", "errors",
                      "warnings", "metadata_stat_mismatches", "constant_features", "video_totals",
-                     "source_max_drift_s"]}, indent=2), flush=True)
+                     "source_max_drift_s"]}, indent=2, allow_nan=False), flush=True)
     return int(report["status"] != "PASS")
 
 

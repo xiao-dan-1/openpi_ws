@@ -1,5 +1,6 @@
 """Real images over official WebSocket transport with a MOCK policy, no model."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,41 @@ sys.path.insert(0, str(WORKSPACE))
 from pipeline.common.reporting import artifact_directory, emit_report
 
 
+def observation_fingerprints(observation):
+    import numpy as np
+
+    fingerprints = {}
+    for key, shape in (("observation/image", (224, 224, 3)),
+                       ("observation/wrist_image", (224, 224, 3)),
+                       ("observation/state", (8,))):
+        value = observation[key]
+        if not isinstance(value, np.ndarray) or value.shape != shape:
+            raise ValueError(f"Invalid {key}: expected array with shape {shape}")
+        fingerprints[key] = {"dtype": value.dtype.str, "shape": list(value.shape),
+                             "sha256": hashlib.sha256(value.tobytes()).hexdigest()}
+    if not isinstance(observation["prompt"], str):
+        raise ValueError("Invalid prompt: expected a string")
+    fingerprints["prompt"] = hashlib.sha256(observation["prompt"].encode("utf-8")).hexdigest()
+    return fingerprints
+
+
+def check_round_trip(client, request):
+    import numpy as np
+
+    expected = observation_fingerprints(request)
+    expected_actions = np.repeat(request["observation/state"][None, :7], 10, axis=0)
+    response = client.infer(request)
+    received = response.get("observation_fingerprints")
+    if not isinstance(received, dict):
+        raise ValueError("Missing or invalid observation fingerprints in WebSocket response")
+    for key, fingerprint in expected.items():
+        if received.get(key) != fingerprint:
+            raise ValueError(f"Observation content changed during WebSocket transport: {key}")
+    if received.keys() != expected.keys():
+        raise ValueError("Unexpected observation fingerprints in WebSocket response")
+    np.testing.assert_array_equal(response["actions"], expected_actions)
+
+
 def serve(port, metadata_file):
     import numpy as np
     from openpi_client.base_policy import BasePolicy
@@ -20,11 +56,9 @@ def serve(port, metadata_file):
 
     class EchoStatePolicy(BasePolicy):
         def infer(self, observation):
-            assert observation["observation/image"].shape == (224, 224, 3)
-            assert observation["observation/wrist_image"].shape == (224, 224, 3)
-            assert observation["observation/state"].shape == (8,)
-            assert isinstance(observation["prompt"], str)
-            return {"actions": np.repeat(observation["observation/state"][None, :7], 10, axis=0)}
+            fingerprints = observation_fingerprints(observation)
+            return {"actions": np.repeat(observation["observation/state"][None, :7], 10, axis=0),
+                    "observation_fingerprints": fingerprints}
 
         def reset(self):
             pass
@@ -49,7 +83,6 @@ def main():
 
 
 def run_check(output):
-    import numpy as np
     from pipeline.inference import policy_rpc
     from pipeline.common.config import UPSTREAM_COMMIT
     from pipeline.inference.check_policy import sample_requests
@@ -92,11 +125,10 @@ def run_check(output):
             client = WebsocketClientPolicy("127.0.0.1", port)
             count = 0
             for _, _, request in sample_requests([0]):
-                actions = client.infer(request)["actions"]
-                np.testing.assert_array_equal(actions,
-                    np.repeat(request["observation/state"][None, :7], 10, axis=0))
+                check_round_trip(client, request)
                 count += 1
-            assert count == 3
+            if count != 3:
+                raise ValueError(f"Expected 3 real observations, checked {count}")
         finally:
             process.terminate()
             try:

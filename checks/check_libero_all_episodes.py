@@ -11,9 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.dont_write_bytecode = True
-os.environ.update({"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu",
-                   "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
-                   "OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"})
 
 
 def require(condition, message):
@@ -22,6 +19,9 @@ def require(condition, message):
 
 
 def main():
+    os.environ.update({"CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu",
+                       "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
+                       "OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"})
     import numpy as np
     import pyarrow as pa
     import pyarrow.parquet as pq

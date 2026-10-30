@@ -14,7 +14,11 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse
 
-sys.dont_write_bytecode = True
+if __package__:
+    from .libero_provenance import validate_stats
+else:
+    from libero_provenance import validate_stats
+
 TOKENIZER_SHA256 = "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
 
 
@@ -23,25 +27,18 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def main():
+def main(argv=None):
     workspace = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, default=workspace / "datasets/libero")
     parser.add_argument("--cache-dir", type=Path, default=workspace / ".cache/huggingface/datasets")
-    args = parser.parse_args()
+    parser.add_argument("--stats-dir", type=Path,
+                        default=workspace / "checks/output/pi05_libero_h10",
+                        help="Completed output from check_libero_normalization.py")
+    args = parser.parse_args(argv)
     root = args.data_root.resolve()
-    stats_dir = workspace / "checks/output/pi05_libero_h10"
-    tokenizer_file = workspace / "openpi_cache/big_vision/paligemma_tokenizer.model"
-    require(tokenizer_file.is_file(), f"Missing tokenizer asset: {tokenizer_file}")
-    require(hashlib.sha256(tokenizer_file.read_bytes()).hexdigest() == TOKENIZER_SHA256,
-            "Tokenizer SHA256 does not match the verified official asset")
-    require((stats_dir / "validation_manifest.json").is_file(), "Run the normalization check first")
-    manifest = json.loads((stats_dir / "validation_manifest.json").read_text())
-    require(manifest["status"] == "PASS"
-            and manifest["validation_profile"] == "pi05_libero, h10, extra_delta_transform=False",
-            "Wrong candidate normalization profile")
-    require(hashlib.sha256((stats_dir / "norm_stats.json").read_bytes()).hexdigest()
-            == manifest["norm_stats_sha256"], "Candidate stats changed since validation")
+    stats_dir = args.stats_dir.resolve()
+    sys.dont_write_bytecode = True
     os.environ.update({
         "CUDA_VISIBLE_DEVICES": "", "JAX_PLATFORMS": "cpu",
         "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
@@ -51,6 +48,11 @@ def main():
         "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2",
     })
     os.environ.pop("LEROBOT_HOME", None)
+    manifest = validate_stats(stats_dir, root)
+    tokenizer_file = workspace / "openpi_cache/big_vision/paligemma_tokenizer.model"
+    require(tokenizer_file.is_file(), f"Missing tokenizer asset: {tokenizer_file}")
+    require(hashlib.sha256(tokenizer_file.read_bytes()).hexdigest() == TOKENIZER_SHA256,
+            "Tokenizer SHA256 does not match the verified official asset")
 
     import jax
     import jax.numpy as jnp
@@ -152,6 +154,7 @@ def main():
         "actions_shape": list(batch["actions"].shape),
         "token_shape": list(observation.tokenized_prompt.shape),
         "camera_shape": [batch_size, 224, 224, 3],
+        "numeric_data_sha256": manifest["numeric_data_sha256"],
         "norm_stats_sha256": manifest["norm_stats_sha256"],
         "scope": "Official pi05_libero input transforms with candidate stats and local assets; "
                  "full final-config DataLoader iteration, weights, GPU, gradients and training not tested",
