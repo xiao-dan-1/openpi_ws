@@ -47,12 +47,22 @@ def main():
     digest = hashlib.sha256((checkpoint / "assets/libero/norm_stats.json").read_bytes()).hexdigest()
     if digest != "7e19abf21b2f8837e1e27c468f4021efe359e38a9f6158acb83b6f978dad6b5a":
         raise ValueError("Downloaded statistics differ from the validated server run")
-    record = describe(config, "finetune")
-    record.update(record_origin="Reconstructed for local inference from validated pipeline configuration; not a downloaded server config.json",
-                  imported_checkpoint=str(checkpoint), trained_updates_from_checkpoint_label=args.step + 1)
+    current = describe(config, "finetune")
+    current.update(norm_stats_sha256=digest, stats_path=str(checkpoint / "assets/libero/norm_stats.json"))
     run_dir = WORKSPACE / "runs/pi05_libero" / args.exp_name
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "config.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+    manifest = run_dir / "config.json"
+    if manifest.exists():
+        record = json.loads(manifest.read_text(encoding="utf-8"))
+        for key in ["upstream_commit_expected", "baseline", "model", "local_dataset_alias", "norm_stats_sha256"]:
+            if record.get(key) != current[key]:
+                raise ValueError(f"Checkpoint inference differs from the training record: {key}")
+    else:
+        record = current
+        record.update(record_origin="Reconstructed for local inference from validated pipeline configuration; not a downloaded server config.json",
+                      imported_checkpoint=str(checkpoint), trained_updates_from_checkpoint_label=args.step + 1)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with manifest.open("x", encoding="utf-8") as output:
+            output.write(json.dumps(record, indent=2))
 
     def bounded_checkpointer():
         return ocp.Checkpointer(ocp.PyTreeCheckpointHandler(restore_concurrent_gb=args.restore_concurrent_gb))

@@ -8,8 +8,16 @@ from pipeline.common import config
 
 class UpstreamRevisionTest(unittest.TestCase):
     def test_original_baseline_is_supported(self):
-        with patch.object(config.subprocess, "check_output", return_value=config.UPSTREAM_COMMIT + "\n"):
+        with patch.object(config.subprocess, "check_output", side_effect=[config.UPSTREAM_COMMIT + "\n", ""]):
             self.assertEqual(config.verify_upstream_revision(), config.UPSTREAM_COMMIT)
+
+    def test_original_baseline_with_modified_runtime_code_is_rejected(self):
+        with patch.object(config.subprocess, "check_output", side_effect=[
+            config.UPSTREAM_COMMIT, "scripts/train.py\n",
+        ]) as git:
+            with self.assertRaisesRegex(ValueError, "Unreviewed changes"):
+                config.verify_upstream_revision()
+            self.assertIn("HEAD", git.call_args.args[0])
 
     def test_reviewed_local_descendant_is_supported(self):
         local = next(iter(config.SUPPORTED_LOCAL_COMMITS))

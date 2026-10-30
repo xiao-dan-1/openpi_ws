@@ -35,6 +35,16 @@ def main():
         raise FileExistsError(f"Experiment exists: {checkpoint}; use --resume or a new name")
     if args.resume and not checkpoint.exists():
         raise FileNotFoundError(f"Resume checkpoint directory is absent: {checkpoint}")
+    if args.resume:
+        import orbax.checkpoint as ocp
+
+        # Orbax ignores unfinished saves; read-only prevents retention/deletion.
+        with ocp.CheckpointManager(checkpoint, options=ocp.CheckpointManagerOptions(
+            read_only=True, create=False
+        )) as manager:
+            latest = manager.latest_step()
+        if latest is None or latest <= 0:
+            raise ValueError("No completed nonzero checkpoint; refusing to restart as --resume")
     run_dir = WORKSPACE / "runs" / config.name / args.exp_name
     if args.resume:
         original = json.loads((run_dir / "config.json").read_text())

@@ -37,13 +37,13 @@ def verify_upstream_revision():
             ["git", "-C", str(repo), "merge-base", "--is-ancestor", UPSTREAM_COMMIT, actual],
             check=True, capture_output=True, text=True,
         )
-        dirty = subprocess.check_output(
-            ["git", "-C", str(repo), "diff", "HEAD", "--name-only", "--",
-             "src/openpi", "scripts/train.py", "scripts/compute_norm_stats.py", "examples/libero/main.py"],
-            text=True,
-        ).strip()
-        if dirty:
-            raise ValueError(f"Unreviewed changes in local OpenPI runtime code: {dirty}")
+    dirty = subprocess.check_output(
+        ["git", "-C", str(repo), "diff", "HEAD", "--name-only", "--",
+         "src/openpi", "scripts/train.py", "scripts/compute_norm_stats.py", "examples/libero/main.py"],
+        text=True,
+    ).strip()
+    if dirty:
+        raise ValueError(f"Unreviewed changes in local OpenPI runtime code: {dirty}")
     return actual
 
 
