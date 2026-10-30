@@ -11,7 +11,7 @@ Destination: <workspace>/openpi_cache/openpi-assets/checkpoints/pi05_base/params
 HF_ENDPOINT defaults to https://hf-mirror.com; override it to switch sites.
 Completed files and Hugging Face partial downloads are reused on reruns.
 Remote file names and sizes must be verified before reporting success.
-Tokenizer and datasets are prepared separately.
+Tokenizer: bash scripts/download_tokenizer.sh. Datasets are prepared separately.
 HELP
     exit 0 ;;
 esac
