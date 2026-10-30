@@ -2,9 +2,6 @@
 datasets/
 openpi_cache/
 
-# 官方 openpi 仓库（独立 git 仓库，副本不进本仓库）
-openpi/
-
 # 运行产物（日志、评测结果、检查点）
 logs/
 runs/
