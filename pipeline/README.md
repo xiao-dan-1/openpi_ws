@@ -43,6 +43,7 @@
 openpi_ws/
   .venv/                  # 工作区统一 Python 环境，不提交 Git
   openpi/                 # 固定版本官方源码仓库，独立同步上游
+  scripts/                # 环境安装与基础权重下载
   pipeline/               # 本目录全部文件
   datasets/libero/        # 已验收的数据
   openpi_cache/           # pi05_base 权重与 tokenizer
@@ -57,8 +58,26 @@ openpi_ws/
 Python 环境由外层工作区管理，路径为工作区根目录的 `.venv/`，不放入 `openpi/`。依赖仍依据官方 `openpi/pyproject.toml` 和 `openpi/uv.lock` 安装。新机器在工作区根目录执行：
 
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 UV_PROJECT_ENVIRONMENT="$PWD/.venv" \
-  uv sync --project openpi --frozen
+git submodule update --init --recursive
+bash scripts/setup_env.sh
+bash scripts/download_weights.sh
+```
+
+两个脚本适用于 Linux/WSL，均从自身位置定位工作空间，可从其他目录通过脚本路径调用。`setup_env.sh` 自动查找 `uv`，缺少时通过[官方安装器](https://docs.astral.sh/uv/reference/installer/)安装到 `~/.local/bin`，不修改 shell 配置；使用 Python 3.11 和 `uv sync --frozen` 创建或同步根目录 `.venv`，保留上游默认开发依赖组，并执行 CPU 依赖导入检查。无需再执行一次 `uv pip install -e`。同步前拒绝 `.venv` 符号链接；已有路径必须是可用的 Python 3.11 虚拟环境，否则报错并保留，需显式移走旧路径后重试。重复同步会移除锁文件之外的额外依赖，`--help` 和执行输出均说明此行为。
+
+`download_weights.sh` 只负责权重：使用环境内的 Hugging Face 库，固定社区镜像仓库 `robotgeneralist/openpi_checkpoint_mirrors2` 的版本 `1fda6b04e83d625eb1a55d68db32050e248cac2b`，下载 `pi05_base/params/` 下约 12.4 GB 的 JAX/Orbax 参数，放入 `openpi_cache/openpi-assets/checkpoints/pi05_base/params/`。默认使用此次服务器下载成功的 `https://hf-mirror.com`，若需直连：
+
+```bash
+HF_ENDPOINT=https://huggingface.co bash scripts/download_weights.sh
+```
+
+下载中断后重跑同一脚本，复用之前命令或脚本下载的文件和 `.cache/huggingface` 缓存。脚本明确关闭 Xet 和 hf_transfer，使用 HTTP 续传；先获取固定版本的远端文件清单，下载后逐个检查文件是否存在、字节数是否匹配，再报告成功。清单查询失败、离线或文件不完整均非零退出，保留续传缓存；该检查不是全量内容哈希校验。两个入口均支持 `--help`，默认仅在终端输出，不生成额外报告。
+
+tokenizer 独立准备，不属于权重下载脚本的职责。在工作空间根目录调用已有的上游下载函数，保存到 `openpi_cache/big_vision/`；后续管道检查会校验其 SHA-256：
+
+```bash
+OPENPI_DATA_HOME="$PWD/openpi_cache" ./.venv/bin/python -B -c \
+  'from openpi.shared.download import maybe_download; print(maybe_download("gs://big_vision/paligemma_tokenizer.model", gs={"token": "anon"}))'
 ```
 
 后续更新依赖也显式使用该环境路径，避免在 `openpi/` 中直接执行未指定环境的 `uv sync` 而重新生成内层 `.venv/`。运行管道使用 `.venv/bin/python -B -m pipeline.q5.check_config` 等命令；不需要修改官方源码或依赖清单。现有机器迁移环境后，已激活旧环境的终端应先执行 `deactivate`，再执行 `source .venv/bin/activate`。
