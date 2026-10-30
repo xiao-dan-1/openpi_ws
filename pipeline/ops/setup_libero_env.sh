@@ -3,7 +3,7 @@
 set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
   echo "Usage: bash pipeline/ops/setup_libero_env.sh"
-  echo "Creates tools/libero-env using Python 3.8; does not modify openpi/.venv."
+  echo "Creates tools/libero-env using Python 3.8; does not modify .venv."
   echo "LIBERO_NETWORK_MODE=direct|inherit (default direct): package download route."
   echo "LIBERO_PYTHON_NETWORK_MODE=direct|inherit: optional independent Python download route."
   echo "UV_DEFAULT_INDEX: optional verified PyPI mirror; PyTorch cu113 still uses its official extra index."

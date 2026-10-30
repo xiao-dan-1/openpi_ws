@@ -43,7 +43,7 @@ CPU检查会审计真实基础检查点全部元数据路径。服务器训练�
 ```bash
 cd /mnt/sda/xd/openpi_ws
 unzip -o q5_validation_update_v1.zip
-openpi/.venv/bin/python -B -m pipeline.q5.check_config
+.venv/bin/python -B -m pipeline.q5.check_config
 ```
 
 包内包含Q5代码、必要依赖/测试、新v2数据和统计，不包含基础权重、Python环境和训练检查点。旧LIBERO入口及v1数据保留。新目录：
@@ -61,8 +61,8 @@ assets/pi05_q5/q5_pick_orange_to_basket_v2_train/
 CPU检查：
 
 ```bash
-openpi/.venv/bin/python -B -m unittest tests.test_q5_pipeline tests.test_pipeline_entrypoints -v
-openpi/.venv/bin/python -B -m pipeline.q5.check_config
+.venv/bin/python -B -m unittest tests.test_q5_pipeline tests.test_pipeline_entrypoints -v
+.venv/bin/python -B -m pipeline.q5.check_config
 ```
 
 检查包括三集合隔离、train/validation真实样本、全状态token未截断、同一训练统计下的归一化、PyAV/图像掩码、无delta转换、数值/时间/QC记录及真实基础权重元数据冻结。默认只在终端显示结果；需要报告时加 --output checks/output/q5/check_config.json，另保存同目录 check_config_base_parameter_metadata.json。
@@ -72,19 +72,19 @@ openpi/.venv/bin/python -B -m pipeline.q5.check_config
 等分配的GPU空闲后，检查完整权重、完整参数树及真实前向：
 
 ```bash
-openpi/.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0
+.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0
 ```
 
 默认只在终端显示结果，不创建报告目录或文件。此入口会创建完整模型和优化器，不是轻量CPU检查，不保存检查点。三步真实更新也可直接运行：
 
 ```bash
-openpi/.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0 --updates 3
+.venv/bin/python -B -u -m pipeline.q5.check_model --gpu 0 --updates 3
 ```
 
 需要保留报告时，显式指定 --output-dir；仅此时保存 weight_loading_report.json、model_check.json，以及检查期间的 INCOMPLETE 标记。指定的目录已存在则拒绝覆盖：
 
 ```bash
-openpi/.venv/bin/python -B -u -m pipeline.q5.check_model \
+.venv/bin/python -B -u -m pipeline.q5.check_model \
   --gpu 0 --updates 3 --output-dir checks/output/q5/model_updates_v2
 ```
 
@@ -116,7 +116,7 @@ finetune默认首段全在预热，入口要求显式 --continue-after-segment�
 
 ```bash
 mkdir -p logs
-nohup openpi/.venv/bin/python -B -u -m pipeline.q5.train \
+nohup .venv/bin/python -B -u -m pipeline.q5.train \
   --gpu 0 --profile smoke --exp-name q5_v2_smoke_01 \
   --batch-size 1 --num-workers 0 --steps 100 \
   > logs/q5_v2_smoke_01.log 2>&1 < /dev/null &
@@ -125,7 +125,7 @@ nohup openpi/.venv/bin/python -B -u -m pipeline.q5.train \
 同一smoke配置加 --steps 120 --resume 验证恢复。正式配置另起实验；若明确首段后继续同一计划：
 
 ```bash
-openpi/.venv/bin/python -B -u -m pipeline.q5.train \
+.venv/bin/python -B -u -m pipeline.q5.train \
   --gpu 0 --profile finetune --exp-name q5_v2_lora_01 \
   --batch-size 1 --num-workers 0 --steps 1000 --continue-after-segment
 ```
@@ -139,7 +139,7 @@ openpi/.venv/bin/python -B -u -m pipeline.q5.train \
 已有v2服务器检查点后：
 
 ```bash
-openpi/.venv/bin/python -B -u -m pipeline.q5.evaluate_validation \
+.venv/bin/python -B -u -m pipeline.q5.evaluate_validation \
   --gpu 0 --exp-name q5_v2_lora_01 --step 999
 ```
 

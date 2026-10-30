@@ -37,7 +37,7 @@ batch 16 含数据加载吞吐约 3.04 个观测样本/秒，纯训练约 3.57 �
 ~~~bash
 mkdir -p logs
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.train.run \
+  .venv/bin/python -u -m pipeline.train.run \
   --gpu GPU-cca35824-7a74-52fc-77f8-e9a254b966f6 \
   --exp-name libero_lora_01 --profile finetune \
   --batch-size 16 --num-workers 2 --steps 1000 \
@@ -64,7 +64,7 @@ tail -n 60 -f logs/libero_lora_01.log
 
 ~~~bash
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.train.run \
+  .venv/bin/python -u -m pipeline.train.run \
   --gpu GPU-cca35824-7a74-52fc-77f8-e9a254b966f6 \
   --exp-name libero_lora_01 --profile finetune \
   --batch-size 16 --num-workers 2 --steps 30000 --resume \

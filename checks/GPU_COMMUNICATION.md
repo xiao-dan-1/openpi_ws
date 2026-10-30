@@ -18,9 +18,9 @@ unzip -o gpu_communication_check_v2.zip
 在可使用的两张卡上逐组执行，不要同时启动多组，以免相互争用。结果直接输出终端：
 
 ```bash
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_communication.py --gpus 0,1
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_communication.py --gpus 2,3
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_communication.py --gpus 0,2
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u checks/check_gpu_communication.py --gpus 0,1
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u checks/check_gpu_communication.py --gpus 2,3
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u checks/check_gpu_communication.py --gpus 0,2
 ```
 
 0+1、2+3是同NUMA的NODE路径；0+2是跨NUMA的SYS路径。脚本显示两张物理卡的UUID、测试前后显存/利用率/计算进程。如果有其他计算进程，会标注shared_load，测试结果只能代表共享负载当时的表现。它不预订显卡、不终止其他进程，也不会自动禁用P2P/SHM来改变通信路线。
@@ -36,7 +36,7 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_commun
 若要查看NCCL实际选择的传输方式，额外做一次小测试：
 
 ```bash
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u checks/check_gpu_communication.py \
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u checks/check_gpu_communication.py \
   --gpus 0,1 --sizes-mib 16 --iterations 10 --debug-transport
 ```
 

@@ -6,9 +6,9 @@
 
 | 文件 | 用途 | 运行环境 |
 |---|---|---|
-| inference/serve_policy.py | 校验训练记录、LoRA 结构及检查点统计量，启动官方策略服务 | openpi/.venv，Python 3.11，单 GPU |
+| inference/serve_policy.py | 校验训练记录、LoRA 结构及检查点统计量，启动官方策略服务 | .venv，Python 3.11，单 GPU |
 | inference/policy_rpc.py | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
-| inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | openpi/.venv，CPU 客户端 |
+| inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
 | eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | tools/libero-env，CPU OSMesa |
 | ops/setup_libero_env.sh | 按固定仓库中的官方依赖表安装独立仿真环境 | tools/libero-env，Python 3.8 |
 | eval/eval_libero.py | 调用官方仿真评估入口，可选保存视频和结构化结果 | tools/libero-env；默认 CPU OSMesa 渲染 |
@@ -22,7 +22,7 @@
 ~~~bash
 cd /mnt/sda/xd/openpi_ws
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.inference.serve_policy \
+  .venv/bin/python -u -m pipeline.inference.serve_policy \
   --gpu GPU-93947930-8f97-38bc-fcea-0b9d168bc871 \
   --exp-name libero_smoke_01 --step 119 --port 8000 \
   >> logs/serve_libero_smoke_01_119.log 2>&1 < /dev/null &
@@ -47,7 +47,7 @@ curl --noproxy '*' -fsS http://127.0.0.1:8000/healthz
 服务保持运行，执行：
 
 ~~~bash
-PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.inference.check_policy \
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.inference.check_policy \
   --exp-name libero_smoke_01 --step 119 --port 8000
 ~~~
 

@@ -22,7 +22,7 @@
 
 ~~~bash
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.train.benchmark_batch \
+  .venv/bin/python -u -m pipeline.train.benchmark_batch \
   --gpu GPU_ID --batches 16 --num-workers 2 \
   --output-dir checks/output/batch_benchmark/workers2_01 \
   --warmup-steps 3 --measure-steps 10 \
@@ -45,7 +45,7 @@ nvidia-smi --query-gpu=index,uuid,memory.used,utilization.gpu --format=csv
 
 ~~~bash
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.train.benchmark_batch \
+  .venv/bin/python -u -m pipeline.train.benchmark_batch \
   --gpu GPU_ID --batches 1 2 4 8 \
   --output-dir checks/output/batch_benchmark/capacity_01 \
   --warmup-steps 3 --measure-steps 20 \

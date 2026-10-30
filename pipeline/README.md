@@ -41,7 +41,8 @@
 
 ~~~text
 openpi_ws/
-  openpi/                 # 固定版本官方仓库，已有 .venv
+  .venv/                  # 工作区统一 Python 环境，不提交 Git
+  openpi/                 # 固定版本官方源码仓库，独立同步上游
   pipeline/               # 本目录全部文件
   datasets/libero/        # 已验收的数据
   openpi_cache/           # pi05_base 权重与 tokenizer
@@ -52,6 +53,15 @@ openpi_ws/
 ~~~
 
 ## 与官方配置的关系
+
+Python 环境由外层工作区管理，路径为工作区根目录的 `.venv/`，不放入 `openpi/`。依赖仍依据官方 `openpi/pyproject.toml` 和 `openpi/uv.lock` 安装。新机器在工作区根目录执行：
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 UV_PROJECT_ENVIRONMENT="$PWD/.venv" \
+  uv sync --project openpi --frozen
+```
+
+后续更新依赖也显式使用该环境路径，避免在 `openpi/` 中直接执行未指定环境的 `uv sync` 而重新生成内层 `.venv/`。运行管道使用 `.venv/bin/python -B -m pipeline.q5.check_config` 等命令；不需要修改官方源码或依赖清单。现有机器迁移环境后，已激活旧环境的终端应先执行 `deactivate`，再执行 `source .venv/bin/activate`。
 
 | 项目 | 官方 pi05_libero | 当前管道 |
 |---|---|---|
@@ -80,7 +90,7 @@ openpi_ws/
 
 ~~~bash
 cd /mnt/sda/xd/openpi_ws
-PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.data.compute_norm_stats \
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.data.compute_norm_stats \
   --num-workers 2 --max-frames 1024
 ~~~
 
@@ -97,7 +107,7 @@ PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.data.compute_norm_
 ~~~bash
 cd /mnt/sda/xd/openpi_ws
 mkdir -p logs
-nohup env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.data.compute_norm_stats \
+nohup env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.data.compute_norm_stats \
   >> logs/official_norm_stats.log 2>&1 < /dev/null &
 ~~~
 
@@ -122,7 +132,7 @@ tail -c 4000 /mnt/sda/xd/openpi_ws/logs/official_norm_stats.log | tr '\r' '\n' |
 可选的小规模软件测试命令如下；WSL 已通过此测试，服务器可直接进行全量统计：
 
 ~~~bash
-openpi/.venv/bin/python -m pipeline.data.compute_norm_stats --max-frames 128
+.venv/bin/python -m pipeline.data.compute_norm_stats --max-frames 128
 ~~~
 
 探测统计量单独写入 checks/output/official_norm_smoke/assets/pi05_libero/libero/，不会用于正式训练。
@@ -133,7 +143,7 @@ openpi/.venv/bin/python -m pipeline.data.compute_norm_stats --max-frames 128
 
 ~~~bash
 cd /mnt/sda/xd/openpi_ws
-PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.data.check_config
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.data.check_config
 ~~~
 
 预期 PASS、两个真实 CPU 批次：state 为 (1,32)，actions 为 (1,10,32)，tokens 为 (1,200)，各摄像头为 (1,224,224,3)。
@@ -145,7 +155,7 @@ PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.data.check_config
 先确认分配给你的空闲 GPU，将 GPU_ID 替换成对应编号或完整 GPU UUID。完成前两步验收后再执行：
 
 ~~~bash
-nohup env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.train.run \
+nohup env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.train.run \
   --gpu GPU_ID --exp-name libero_smoke_01 --profile smoke \
   >> logs/libero_smoke_01.log 2>&1 < /dev/null &
 ~~~
@@ -159,7 +169,7 @@ nohup env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.train.ru
 在试跑完成后，验证从同一实验恢复：
 
 ~~~bash
-openpi/.venv/bin/python -m pipeline.train.run \
+.venv/bin/python -m pipeline.train.run \
   --gpu GPU_ID --exp-name libero_smoke_01 --profile smoke --steps 120 --resume
 ~~~
 
@@ -168,7 +178,7 @@ openpi/.venv/bin/python -m pipeline.train.run \
 恢复验收通过后，先按照 INFERENCE_EVAL.md 接通检查点策略服务与 LIBERO 评估。batch 与加载测试现已完成，正式首段选定 batch 16、num_workers 2、1000 次更新。详细计划见 FORMAL_TRAINING.md；当前尚未实现梯度累积：
 
 ~~~bash
-nohup env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -m pipeline.train.run \
+nohup env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.train.run \
   --gpu GPU_ID --exp-name libero_lora_01 --profile finetune \
   --batch-size 16 --num-workers 2 --steps 1000 \
   >> logs/libero_lora_01.log 2>&1 < /dev/null &

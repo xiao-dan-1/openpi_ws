@@ -18,7 +18,7 @@ unzip -o q5_dual_training_v1.zip
 当前代码和双卡更新包已包含`--memory-fraction`，默认0.75；`q5_memory_fraction_cli_v1.zip`只是早期单独升级显存参数的历史包，不要再覆盖较新的双卡训练代码。为两张24GiB卡指定0.65时，每张池预算约15.6GiB；这不是实际活跃内存或整个进程硬上限。下面是已失败配置的复现示例，不是建议的训练启动参数：
 
 ```bash
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
   --gpus 1,2 --fsdp-devices 2 --batch-size 16 --memory-fraction 0.65
 ```
 
@@ -30,15 +30,15 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmar
 
 ```bash
 # 单卡基线：全局batch4，每卡4
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
   --gpus 2 --fsdp-devices 1 --batch-size 4
 
 # 双卡FSDP：全局batch4，每卡2
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
   --gpus 2,3 --fsdp-devices 2 --batch-size 4
 
 # 上一组成功后：全局batch8，每卡4
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.q5.benchmark_fsdp \
   --gpus 2,3 --fsdp-devices 2 --batch-size 8
 ```
 
@@ -62,7 +62,7 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.benchmar
 用两个模拟CPU设备验证状态张量真实分片、全局batch拆分和donated训练状态复用；不加载完整模型，不进行本机GPU训练。相关CPU测试：
 
 ```bash
-openpi/.venv/bin/python -B -m unittest tests.test_q5_fsdp_benchmark tests.test_gpu_communication \
+.venv/bin/python -B -m unittest tests.test_q5_fsdp_benchmark tests.test_gpu_communication \
   tests.test_q5_pipeline tests.test_pipeline_entrypoints -q
 ```
 

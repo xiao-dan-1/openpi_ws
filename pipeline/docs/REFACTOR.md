@@ -45,7 +45,7 @@ Python 子目录均包含 `__init__.py`，包初始化不加载模型或仿真�
 
 ## 入口对照
 
-在工作区根目录执行，按任务选用 `openpi/.venv/bin/python` 或独立仿真环境的解释器。下面列的是入口，实际参数见 `--help` 和各操作文档。
+在工作区根目录执行，按任务选用 `.venv/bin/python` 或独立仿真环境的解释器。下面列的是入口，实际参数见 `--help` 和各操作文档。
 
 | 原脚本 | 新调用 |
 |---|---|
@@ -89,7 +89,7 @@ python -B -m unittest tests.test_pipeline_entrypoints tests.test_batch_benchmark
 在固定 OpenPI 训练环境中运行全部回归测试，包括小型 CPU TrainState 测试：
 
 ```bash
-openpi/.venv/bin/python -B -m unittest discover -s tests -v
+.venv/bin/python -B -m unittest discover -s tests -v
 ```
 
 没有 JAX/Flax/Optax/OpenPI 时 TrainState 模块会报告跳过；入口及调度测试仅使用标准库。测试覆盖模块帮助、非法参数提前拒绝、独立工作目录下的路径解析、计划模式、batch 子进程参数与进程组清理。TrainState 使用小型 CPU 状态，不代表真实 GPU 训练或模型效果通过。

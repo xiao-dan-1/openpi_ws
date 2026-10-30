@@ -18,7 +18,7 @@
 ```bash
 cd /mnt/sda/xd/openpi_ws
 unzip -o q5_dual_training_v1.zip
-env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.check_config
+env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.q5.check_config
 ```
 
 该包包含打包时的Q5代码及依赖、CPU回归测试与说明，不包含OpenPI源码、环境、数据、权重或检查点。后发的torchvision警告过滤需另装q5_video_warning_filter_v1.zip，或使用当前Git代码。前提是已经安装结构化pipeline和v2的50/5/10数据与训练统计。不会清理服务器已有文件。
@@ -37,7 +37,7 @@ env PYTHONDONTWRITEBYTECODE=1 openpi/.venv/bin/python -u -m pipeline.q5.check_co
 cd /mnt/sda/xd/openpi_ws
 mkdir -p logs
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.q5.train \
+  .venv/bin/python -u -m pipeline.q5.train \
   --gpus 1,2 --fsdp-devices 2 \
   --profile smoke --exp-name q5_v2_fsdp2_b16_smoke_01 \
   --batch-size 16 --num-workers 0 --memory-fraction 0.75 --steps 100 \
@@ -56,7 +56,7 @@ tail -n 80 -f logs/q5_v2_fsdp2_b16_smoke_01.log
 
 ```bash
 nohup env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.q5.train \
+  .venv/bin/python -u -m pipeline.q5.train \
   --gpus 1,2 --fsdp-devices 2 \
   --profile smoke --exp-name q5_v2_fsdp2_b16_smoke_01 \
   --batch-size 16 --num-workers 0 --memory-fraction 0.75 --steps 120 --resume \
@@ -95,7 +95,7 @@ smoke 的 warmup=10、schedule=1000 在两次命令间保持一致，恢复不�
 
 ```bash
 env PYTHONDONTWRITEBYTECODE=1 \
-  openpi/.venv/bin/python -u -m pipeline.q5.evaluate_validation \
+  .venv/bin/python -u -m pipeline.q5.evaluate_validation \
   --gpu 1 --exp-name q5_v2_fsdp2_b16_smoke_01 --step 119 --memory-fraction 0.75
 ```
 
