@@ -34,9 +34,9 @@ def parse_worker_output(stdout):
 
 def gpu_pair(value):
     parts = value.split(",")
-    if len(parts) != 2 or len(set(parts)) != 2 or not all(p.isdigit() for p in parts):
+    if len(parts) != 2 or not all(p.isdigit() for p in parts) or len({int(p) for p in parts}) != 2:
         raise argparse.ArgumentTypeError("Specify two distinct physical GPU indices, e.g. 0,1")
-    return value
+    return ",".join(str(int(p)) for p in parts)
 
 
 def positive_size(value):
@@ -86,10 +86,20 @@ def snapshot(pair):
     return {"devices": devices, "compute_processes": active}
 
 
+def gpu_uuids(pair, devices):
+    """Keep requested nvidia-smi order; UUIDs avoid CUDA ordinal differences."""
+    by_index = {device["index"]: device["uuid"] for device in devices}
+    uuids = [by_index[index] for index in pair.split(",")]
+    if len(set(uuids)) != 2 or not all(uuid.startswith("GPU-") and len(uuid) > 4 for uuid in uuids):
+        raise ValueError("Cannot resolve two distinct GPU UUIDs; no communication test started")
+    return ",".join(uuids)
+
+
 def worker(args):
     # This standalone benchmark never calls the Q5 runtime or changes its settings.
     # Small synthetic buffers use their own modest, on-demand JAX memory pool.
-    os.environ["CUDA_VISIBLE_DEVICES"] = "" if args.cpu_fixture else args.gpus
+    os.environ["CUDA_VISIBLE_DEVICES"] = ("" if args.cpu_fixture else
+                                         gpu_uuids(args.gpus, snapshot(args.gpus)["devices"]))
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.1"
     os.environ.pop("XLA_CLIENT_MEM_FRACTION", None)
@@ -168,6 +178,7 @@ def worker(args):
             jax.clear_caches()
         del x
     return {"status": "PASS", "device_pair": args.gpus, "backend": jax.default_backend(),
+            "cuda_visible_devices": os.environ["CUDA_VISIBLE_DEVICES"],
             "jax_version": jax.__version__, "jaxlib_version": jaxlib.__version__,
             "devices": [str(d) for d in devices], "results": rows,
             "scope": "synchronized host-dispatched synthetic collectives; compilation/warmup/host transfers excluded",

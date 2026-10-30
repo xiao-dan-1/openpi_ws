@@ -25,6 +25,8 @@ env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u checks/check_gpu_communication
 
 0+1、2+3是同NUMA的NODE路径；0+2是跨NUMA的SYS路径。脚本显示两张物理卡的UUID、测试前后显存/利用率/计算进程。如果有其他计算进程，会标注shared_load，测试结果只能代表共享负载当时的表现。它不预订显卡、不终止其他进程，也不会自动禁用P2P/SHM来改变通信路线。
 
+上述NUMA关系是旧四卡服务器的实测，不代表新服务器。通信测试要求两张GPU，单卡环境不适用。输入仍为`nvidia-smi`物理编号，测试子进程在导入JAX前将其按请求顺序解析为UUID并写入`CUDA_VISIBLE_DEVICES`，结果另记录`cuda_visible_devices`，避免CUDA枚举顺序不同造成错卡；解析失败即停止，不回退到数字编号。
+
 默认测试4KiB、1MiB、16MiB、64MiB的每卡float32输入。每种通信预热5次、测量50次，每次等待结果完成后计时。JIT编译、预热和CPU传入/传出检查不进入计时。每对卡使用独立进程，超时默认300秒，超时终止该测试子进程。独立测试进程关闭预分配并设置10%池预算，减小合成测试占用；这些设置不会修改Q5训练的75%配置。此预算不是实际占用或整个进程硬上限。
 
 测试输出的median_ms和p90_ms越低越好。normalized_bus_GB_per_s越高越好，它依据NVIDIA nccl-tests相同的消息尺寸归一化公式换算，单位为十进制GB/s，不是直接测得的PCIe总线吞吐。两卡AllReduce按输入字节/time计算；AllGather按每卡输入字节/time；ReduceScatter按每卡输入字节/(2*time)。AllGather的输出是每卡输入的两倍，ReduceScatter是输入的一半。

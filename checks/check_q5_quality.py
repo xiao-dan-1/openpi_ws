@@ -1,10 +1,15 @@
-"""Read-only Q5/LeRobot audit; write findings and review sheets outside the dataset."""
+"""Audit Q5 data into a new external directory; exit 1 on errors, 0 on success.
+
+Requires PyAV, NumPy, PyArrow and Pillow. Source data is never modified.
+An INCOMPLETE marker remains if the audit cannot finish.
+"""
 
 import argparse
 import csv
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import av
 import numpy as np
@@ -49,27 +54,20 @@ def source_qc(root):
             topics.setdefault(topic, []).append(values)
     return dict(provenance="Counters from converter timing sidecars; raw bags were not re-read.",
                 totals={k: sum(r[k] for r in rows) for k in ["output_images", "source_images", "no_state", "no_action", "stale_state", "stale_action", "disorder", "age_a_future"]},
-                maxima={k: max(r[k] for r in rows) for k in ["age_s_max", "age_a_max", "back_max"]},
-                minima={k: min(r[k] for r in rows) for k in ["age_s_min", "age_a_min"]},
+                maxima={k: max((r[k] for r in rows), default=None) for k in ["age_s_max", "age_a_max", "back_max"]},
+                minima={k: min((r[k] for r in rows), default=None) for k in ["age_s_min", "age_a_min"]},
                 topic_gap_raw_values=topics, episodes=rows)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", type=Path)
-    parser.add_argument("output", type=Path)
-    args = parser.parse_args()
-    root, out = args.root.resolve(), args.output.resolve()
-    if out == root or root in out.parents:
-        raise ValueError("Output must be outside the source dataset")
-    out.mkdir(parents=True, exist_ok=True)
+def audit(root, out):
+    """Read data, write review artifacts, and return a completed audit report."""
     info = json.loads((root / "meta/info.json").read_text())
     episodes = jsonl(root / "meta/episodes.jsonl")
     tasks = jsonl(root / "meta/tasks.jsonl")
     stats_rows = jsonl(root / "meta/episodes_stats.jsonl")
     stored_stats = {e["episode_index"]: e["stats"] for e in stats_rows}
     fps = info["fps"]
-    errors, warnings, rows, joints, jumps, repeats = [], [], [], [], [], []
+    errors, warnings, rows, joints, jumps = [], [], [], [], []
     arrays = {"action": [], "observation.state": []}
     differences = {k: [] for k in arrays}
     lags = {group: {lag: [] for lag in range(-15, 16)}
@@ -139,6 +137,7 @@ def main():
                 if stat in stored and not np.allclose(stored[stat], computed, atol=2e-5, rtol=2e-4):
                     stats_mismatches.append(dict(episode=eid, feature=key, stat=stat,
                                                 max_abs_error=float(np.max(np.abs(np.asarray(stored[stat]) - computed)))))
+                    errors.append(f"episode {eid}: stored {key}.{stat} differs from data")
             if "count" in stored:
                 require(np.all(np.asarray(stored["count"]) == n), f"episode {eid}: stats count {key}")
         for name, sl in groups.items():
@@ -148,7 +147,8 @@ def main():
             for lag in lags[name]:
                 # lag > 0: present command compared with future measured state.
                 x, y = (action[:-lag], state[lag:]) if lag > 0 else ((action[-lag:], state[:lag]) if lag < 0 else (action, state))
-                lags[name][lag].append(float(np.mean(np.abs(x - y))))
+                if len(x):
+                    lags[name][lag].append(float(np.mean(np.abs(x - y))))
         timing_file = root / "meta/timing" / f"episode_{eid:06d}.json"
         require(timing_file.exists(), f"episode {eid}: missing source timing")
         if timing_file.exists():
@@ -165,7 +165,6 @@ def main():
         thumbs, brightness, blur, pts, video_deltas = {}, [], [], [], []
         seen_hashes, previous_gray, longest_repeat, repeat_run = set(), None, 0, 0
         exact_repeats = black = white = decoded = 0
-        video_error = None
         try:
             with av.open(str(video_file)) as container:
                 stream = container.streams.video[0]
@@ -196,7 +195,6 @@ def main():
                     if frame_i in wanted:
                         thumbs[frame_i] = frame.to_image().resize((320, 240))
         except Exception as exc:
-            video_error = str(exc)
             errors.append(f"episode {eid}: video decode {exc}")
         require(decoded == n, f"episode {eid}: decoded video {decoded} vs data {n}")
         valid_pts = np.array([p for p in pts if p is not None])
@@ -207,9 +205,10 @@ def main():
             require(row["video_pts_max_error_s"] < 1 / fps / 2, f"episode {eid}: video PTS/data misalignment")
         row.update(decoded_video_frames=decoded, black_frames=black, white_frames=white,
                    repeated_video_frames=exact_repeats, longest_identical_video_run_frames=longest_repeat + 1,
-                   unique_video_thumbnails=len(seen_hashes), brightness_mean=float(np.mean(brightness)),
+                   unique_video_thumbnails=len(seen_hashes), brightness_mean=float(np.mean(brightness)) if brightness else None,
                    brightness_min=float(np.min(brightness)) if brightness else None,
-                   sharpness_median=float(np.median(blur)), video_change_median=float(np.median(video_deltas)))
+                   sharpness_median=float(np.median(blur)) if blur else None,
+                   video_change_median=float(np.median(video_deltas)) if video_deltas else None)
         if black or white:
             warnings.append(f"episode {eid}: {black} black, {white} white frames")
         if longest_repeat >= fps:
@@ -228,6 +227,8 @@ def main():
     unreferenced = sorted(str(p.relative_to(root)) for p in (actual_data | actual_video) - expected_files)
     require(not unreferenced, "unreferenced data/video files")
     for key, chunks in arrays.items():
+        if not chunks:
+            continue
         a, delta = np.concatenate(chunks), np.concatenate(differences[key])
         for dim, name in enumerate(info["features"][key]["names"]):
             joints.append(dict(feature=key, joint=name, minimum=float(a[:, dim].min()),
@@ -246,14 +247,15 @@ def main():
                 sheet.paste(thumb, (c * 320, r * 264 + 24))
                 draw.text((c * 320 + 7, r * 264 + 5), f"ep {eid:02d} | frame {frame_i} | {frame_i / fps:.2f}s", fill="white")
         sheet.save(out / f"episodes_{start:02d}_{start + len(subset) - 1:02d}.jpg", quality=90)
-    sheet = Image.new("RGB", (6 * 240, ((len(ends) + 5) // 6) * 200), "#17202b")
-    draw = ImageDraw.Draw(sheet)
-    for i, (eid, thumb) in enumerate(ends):
-        x, y = i % 6 * 240, i // 6 * 200
-        sheet.paste(thumb.resize((240, 180)), (x, y + 20))
-        draw.text((x + 5, y + 3), f"episode {eid:02d} - final frame", fill="white")
-    sheet.save(out / "all_final_frames.jpg", quality=92)
-    report = dict(root=str(root), metadata=info, errors=errors, warnings=warnings,
+    if ends:
+        sheet = Image.new("RGB", (6 * 240, ((len(ends) + 5) // 6) * 200), "#17202b")
+        draw = ImageDraw.Draw(sheet)
+        for i, (eid, thumb) in enumerate(ends):
+            x, y = i % 6 * 240, i // 6 * 200
+            sheet.paste(thumb.resize((240, 180)), (x, y + 20))
+            draw.text((x + 5, y + 3), f"episode {eid:02d} - final frame", fill="white")
+        sheet.save(out / "all_final_frames.jpg", quality=92)
+    report = dict(status="FAIL" if errors else "PASS", root=str(root), metadata=info, errors=errors, warnings=warnings,
                   source_qc=source_qc(root),
                   episodes_checked=len(rows), decoded_video_frames=sum(r["decoded_video_frames"] for r in rows),
                   total_duration_s=info["total_frames"] / fps, duration_s=distribution([r["duration_s"] for r in rows]),
@@ -262,10 +264,11 @@ def main():
                   unreferenced_files=unreferenced,
                   constant_features=[j for j in joints if j["unique_values"] == 1],
                   largest_steps=sorted(jumps, key=lambda j: j["abs_step"], reverse=True)[:40],
-                  lag_mae_equal_episode_weight={g: {str(lag): float(np.mean(v)) for lag, v in data.items()}
+                  lag_mae_equal_episode_weight={g: {str(lag): float(np.mean(v)) if v else None for lag, v in data.items()}
                                                 for g, data in lags.items()},
                   source_dt_s=distribution([r["source_dt_max_s"] for r in rows if "source_dt_max_s" in r]),
-                  source_max_drift_s=max([r.get("source_vs_video_max_drift_s", 0) for r in rows]),
+                  source_max_drift_s=max((r["source_vs_video_max_drift_s"] for r in rows
+                                          if "source_vs_video_max_drift_s" in r), default=None),
                   video_totals={k: sum(r[k] for r in rows) for k in ["black_frames", "white_frames", "repeated_video_frames"]},
                   limitations=["No robot joint limits or action-unit contract supplied; range and step sizes are descriptive.",
                                "Video PTS and source image timestamps checked; raw joint/command timestamps unavailable unless recorded in timing sidecars.",
@@ -275,8 +278,36 @@ def main():
     write_csv(out / "episodes.csv", rows)
     write_csv(out / "joint_statistics.csv", joints)
     write_csv(out / "largest_steps.csv", sorted(jumps, key=lambda j: j["abs_step"], reverse=True))
-    print(json.dumps({k: report[k] for k in ["episodes_checked", "decoded_video_frames", "errors", "warnings", "constant_features", "video_totals", "source_max_drift_s"]}, indent=2), flush=True)
+    return report
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path)
+    parser.add_argument("output", type=Path, help="New report directory outside the dataset; never overwritten")
+    args = parser.parse_args(argv)
+    root, out = args.root.resolve(), args.output.resolve()
+    if out == root or root in out.parents:
+        parser.error("Output must be outside the source dataset")
+    if not (root / "meta/info.json").is_file():
+        parser.error(f"Missing dataset metadata: {root / 'meta/info.json'}")
+    try:
+        out.mkdir(parents=True)
+    except FileExistsError:
+        parser.error(f"Output already exists; choose a new directory: {out}")
+    marker = out / "INCOMPLETE"
+    marker.write_text("Audit did not finish; do not use partial reports.\n", encoding="utf-8")
+    try:
+        report = audit(root, out)
+    except Exception as exc:
+        print(f"FAIL: {type(exc).__name__}: {exc}\nIncomplete audit: {out}", file=sys.stderr)
+        return 1
+    marker.unlink()
+    print(json.dumps({k: report[k] for k in ["status", "episodes_checked", "decoded_video_frames", "errors",
+                     "warnings", "metadata_stat_mismatches", "constant_features", "video_totals",
+                     "source_max_drift_s"]}, indent=2), flush=True)
+    return int(report["status"] != "PASS")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
-from checks.check_gpu_communication import corrected_bus_bytes, gpu_pair, positive_size, parse_worker_output
+from checks.check_gpu_communication import corrected_bus_bytes, gpu_pair, gpu_uuids, positive_size, parse_worker_output
 
 
 class CommunicationTests(unittest.TestCase):
@@ -26,12 +28,34 @@ class CommunicationTests(unittest.TestCase):
                 parse_worker_output(output)
 
     def test_invalid_gpu_pairs_and_sizes(self):
-        for pair in ["0", "0,0", "0,1,2", "a,1", "0,-1"]:
+        for pair in ["0", "0,0", "0,00", "0,1,2", "a,1", "0,-1"]:
             with self.subTest(pair=pair), self.assertRaises(argparse.ArgumentTypeError):
                 gpu_pair(pair)
         for size in ["0", "-1", "nan", "inf", "129"]:
             with self.subTest(size=size), self.assertRaises(argparse.ArgumentTypeError):
                 positive_size(size)
+
+    def test_physical_indices_resolve_to_uuid_in_requested_order(self):
+        devices = [{"index": "0", "uuid": "GPU-first"}, {"index": "2", "uuid": "GPU-third"}]
+        self.assertEqual(gpu_pair("02,0"), "2,0")
+        self.assertEqual(gpu_uuids("2,0", devices), "GPU-third,GPU-first")
+        for uuids in [("N/A", "GPU-third"), ("GPU-first", "GPU-first")]:
+            invalid = [dict(index=str(index), uuid=uuid) for index, uuid in zip([0, 2], uuids)]
+            with self.subTest(uuids=uuids), self.assertRaisesRegex(ValueError, "GPU UUIDs"):
+                gpu_uuids("0,2", invalid)
+
+    def test_worker_sets_uuid_selection_before_device_discovery(self):
+        from checks import check_gpu_communication as communication
+        args = SimpleNamespace(gpus="2,0", cpu_fixture=False, debug_transport=False)
+        devices = [{"index": "0", "uuid": "GPU-first"}, {"index": "2", "uuid": "GPU-third"}]
+        with mock.patch.dict(os.environ), \
+             mock.patch.object(communication, "snapshot", return_value={"devices": devices}), \
+             mock.patch("jax.local_devices", return_value=[]), \
+             self.assertRaisesRegex(RuntimeError, "Expected exactly two"):
+            try:
+                communication.worker(args)
+            finally:
+                self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "GPU-third,GPU-first")
 
     def test_bus_normalization_uses_different_collective_message_sizes(self):
         self.assertEqual(corrected_bus_bytes("all_reduce", 1024), 1024)
