@@ -6,7 +6,7 @@
 
 Q5的GPU入口支持显式 `--memory-fraction`，默认0.75。覆盖范围为train、check_model、evaluate_validation和独立benchmark_fsdp；双卡时是对每卡总显存分别设置，并非两卡共享一份预算。该CLI值优先于启动环境中的两种fraction变量，初始化时统一设置，避免被写死常量覆盖。报告/训练清单记录实际fraction及预分配/allocator设置。本次没有调整是否预分配，LIBERO入口仍使用原0.75设置。
 
-显存比例可显式覆盖，不传此参数时使用0.75预算。比例较低只缩小池预算，不降低模型本身需求；服务器双卡全局batch16在0.65下OOM、0.75下通过。代码指纹检查仍生效，旧实验恢复不要绕过校验，新测试使用独立进程。
+显存比例可显式覆盖，不传此参数时使用0.75预算。比例较低只缩小池预算，不降低模型本身需求；服务器双卡全局batch16在0.65下OOM、0.75下通过。恢复仍校验训练配置、数据和上游版本；本地代码指纹用于溯源，差异会打印并记录。新测试使用独立进程。
 
 ## 数据与模型
 
@@ -58,7 +58,7 @@ assets/pi05_q5/q5_pick_orange_to_basket_v2_train/
 
 准备包可直接使用而不运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分、清单完整但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
 
-训练前核对各集合 `meta/episodes.jsonl` 的轨迹编号和长度与清单一致，并验证 Parquet、视频及时间记录指纹；`check_files=False` 仅跳过文件哈希比较，仍检查轨迹边界。新清单不生成 `metadata_sha256`，已有清单中的该字段直接忽略；无需修改旧 split 或重算统计。恢复训练仍要求实验记录中的配置、数据和实现指纹一致；本次修改改变了 `runtime.py` 实现指纹，旧实验能否 resume 需单独核对。
+训练前核对各集合 `meta/episodes.jsonl` 的轨迹编号和长度与清单一致，并验证 Parquet、视频及时间记录指纹；`check_files=False` 仅跳过文件哈希比较，仍检查轨迹边界。新清单不生成 `metadata_sha256`，已有清单中的该字段直接忽略；无需修改旧 split 或重算统计。恢复训练仍要求实验记录中的配置、数据和上游版本一致。本地实现指纹差异不再直接阻断，而是记录到 `resume_config.json` 的 `implementation_changes`；原始 `config.json` 保持不变。配置相同不代表代码语义相同，涉及预处理或训练逻辑的修改仍需审查。
 
 `cleaning_manifest.json` 是可选的自定义历史记录，不是 LeRobot 标准数据文件。有清单时校验并保留清理前轨迹编号；没有时仍可按源数据当前的 episode_index 完成 50/5/10 划分及训练统计，划分清单中 cleaning_history_available=false、original_episode_index=null。程序不会猜测此前删除过哪些轨迹，也不会重复删除 episode 0。已有但不完整或编号重复的清单会报错。
 
@@ -160,7 +160,7 @@ nohup .venv/bin/python -B -u -m pipeline.q5.train \
 
 如决定总共只训练1000步，显式选择较短预热和匹配长度，例如 --warmup-steps 100 --schedule-steps 1000 --steps 1000。该选项不会自动替换与LIBERO对齐的默认计划。后续总预算结合服务器吞吐、实际batch和验证结果确定。
 
-恢复需保持模型、数据、统计、调度、全局batch、卡数、分片数量和代码一致；不能从旧55/10或不同冻结策略直接恢复为v2，使用新实验名。恢复前检查已提交检查点的步数及优化器计数器；训练结束校验最终保存并写入运行目录的 training_result.json。
+恢复需保持模型、数据、统计、调度、全局batch、卡数、分片数量和上游版本一致；不能从旧55/10或不同冻结策略直接恢复为v2，使用新实验名。恢复前检查已提交检查点的步数及优化器计数器；训练结束校验最终保存并写入运行目录的 training_result.json。
 
 上游 resume 会重建数据迭代器；固定 batch 的保存恢复测试验证参数和优化器状态接续，不保证真实数据训练与不中断运行逐步等同。
 

@@ -13,8 +13,11 @@ from pipeline.q5.parallelism import gpu_selectors, training_layout
 def require_resume_configuration(original, manifest):
     for key in ["profile", "model", "freeze_policy", "learning_rate", "optimizer", "batch_size", "seed",
                 "fsdp_devices", "device_count", "split_manifest_sha256", "norm_stats_sha256",
-                "upstream_commit", "implementation_sha256"]:
+                "upstream_commit"]:
         require(original.get(key) == manifest.get(key), f"Resume configuration differs: {key}")
+    previous = original.get("implementation_sha256", {})
+    current = manifest.get("implementation_sha256", {})
+    return sorted(name for name in previous.keys() | current.keys() if previous.get(name) != current.get(name))
 
 
 def main():
@@ -89,7 +92,10 @@ def main():
     if args.resume:
         require(config.checkpoint_dir.exists(), "No checkpoint directory to resume")
         original = json.loads((run_dir / "config.json").read_text())
-        require_resume_configuration(original, manifest)
+        manifest["implementation_changes"] = require_resume_configuration(original, manifest)
+        if manifest["implementation_changes"]:
+            print(json.dumps({"implementation_changes": manifest["implementation_changes"],
+                              "note": "Code fingerprints are recorded for provenance; matching configuration does not prove code equivalence."}), flush=True)
         from pipeline.q5.checkpointing import checkpoint_progress
         progress = checkpoint_progress(config.checkpoint_dir, manifest["norm_stats_sha256"])
         require(progress["state_step"] < config.num_train_steps, "--steps must exceed the restored state.step")

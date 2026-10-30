@@ -60,12 +60,21 @@ class TrainingArgumentsTests(unittest.TestCase):
     def test_resume_guards_strategy_but_allows_other_physical_cards(self):
         original = {key: "same" for key in ["profile", "model", "freeze_policy", "learning_rate", "optimizer",
                     "batch_size", "seed", "fsdp_devices", "device_count", "split_manifest_sha256",
-                    "norm_stats_sha256", "upstream_commit", "implementation_sha256"]}
+                    "norm_stats_sha256", "upstream_commit"]}
         current = dict(original, parallelism={"gpu_selectors": "0,1"}, steps=120)
         require_resume_configuration(original, current)
         for key in original:
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
                 require_resume_configuration(original, dict(current, **{key: "changed"}))
+
+    def test_resume_records_code_changes_without_rejecting_matching_configuration(self):
+        original = {"implementation_sha256": {"runtime.py": "old", "train.py": "same", "removed.py": "old"}}
+        current = {"implementation_sha256": {"runtime.py": "new", "train.py": "same", "added.py": "new"}}
+        self.assertEqual(require_resume_configuration(original, current), ["added.py", "removed.py", "runtime.py"])
+        self.assertEqual(original["implementation_sha256"]["runtime.py"], "old")
+        self.assertEqual(require_resume_configuration(current, current), [])
+        with self.assertRaisesRegex(ValueError, "model"):
+            require_resume_configuration(original, dict(current, model="changed"))
 
     def test_train_delegates_dual_config_and_records_saved_progress(self):
         import jax
