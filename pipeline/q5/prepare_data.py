@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import random
 
-from pipeline.q5.runtime import Paths, prepare_environment, require, sha256, validate_split
+from pipeline.q5.runtime import Paths, SPLIT_METADATA_FILES, prepare_environment, require, sha256, validate_split
 from pipeline.q5.schema import JOINT_NAMES
 
 
@@ -62,7 +62,7 @@ def prepare_split(paths, source, *, seed=42):
     marker.parent.mkdir(parents=True, exist_ok=True)
     with marker.open("x") as f:
         f.write("Split preparation in progress; do not train.\n")
-    manifest = dict(status="PASS", seed=seed, validation_seed=43,
+    manifest = dict(status="PASS", seed=seed, validation_seed=43, metadata_sha256={},
                     locked_test_source_episode_ids=sorted(test_ids),
                     previous_split_sha256=sha256(previous) if previous.is_file() else None,
                     selection="original ten test episodes locked; five validation samples stratified within the remaining 55; no outcome-based selection",
@@ -93,6 +93,7 @@ def prepare_split(paths, source, *, seed=42):
                                 output_episode_index=dst_id, length=row["length"], data_path=data_path,
                                 sha256=sha256(destination / data_path), source_bag=timing["source_bag"], assets=assets))
         manifest[role] = records
+        manifest["metadata_sha256"][role] = {name: sha256(destination / name) for name in SPLIT_METADATA_FILES}
     paths.split_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
     marker.unlink()
     try:

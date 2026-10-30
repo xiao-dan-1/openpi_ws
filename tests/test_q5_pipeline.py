@@ -211,7 +211,7 @@ class Q5PopulationGuardTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.paths = Paths.create(self.directory.name)
-        m = {"status": "PASS"}
+        m = {"status": "PASS", "metadata_sha256": {}}
         tests = set(choose_test_ids(42))
         validation = set(choose_validation_ids(tests))
         m["locked_test_source_episode_ids"] = sorted(tests)
@@ -228,6 +228,12 @@ class Q5PopulationGuardTests(unittest.TestCase):
                 records.append(dict(source_episode_index=old, output_episode_index=new, length=1,
                                     data_path=relative, sha256=sha256(root / relative)))
             m[role] = records
+            (root / "meta/tasks.jsonl").write_text('{"task_index": 0, "task": "pick orange"}\n')
+            (root / "meta/episodes.jsonl").write_text("".join(
+                json.dumps({"episode_index": r["output_episode_index"], "length": r["length"]}) + "\n"
+                for r in records))
+            m["metadata_sha256"][role] = {name: sha256(root / name)
+                                         for name in ["meta/tasks.jsonl", "meta/episodes.jsonl"]}
         self.paths.split_manifest.write_text(json.dumps(m))
         self.paths.stats.mkdir(parents=True)
         (self.paths.stats / "norm_stats.json").write_text("{}")

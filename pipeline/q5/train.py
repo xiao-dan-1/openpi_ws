@@ -27,7 +27,7 @@ def main():
                         help="Single GPU defaults to 1; two GPUs require explicit 2")
     parser.add_argument("--exp-name", required=True, type=experiment_name)
     parser.add_argument("--profile", choices=["smoke", "finetune"], default="smoke")
-    parser.add_argument("--steps", type=int)
+    parser.add_argument("--steps", type=int, help="Cumulative training limit, at least 2")
     parser.add_argument("--batch-size", type=int, default=1, help="Global batch across selected GPUs")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
@@ -44,8 +44,10 @@ def main():
         layout = training_layout(gpus, args.fsdp_devices, args.batch_size)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.batch_size < 1 or args.num_workers < 0 or (args.steps is not None and args.steps < 1):
-        parser.error("Batch/steps must be positive; workers must be non-negative")
+    if args.steps is not None and args.steps < 2:
+        parser.error("--steps must be at least 2 (the official trainer's checkpoint label 0 cannot be resumed)")
+    if args.batch_size < 1 or args.num_workers < 0:
+        parser.error("Batch must be positive; workers must be non-negative")
     from pipeline.q5.schedule import validate_schedule
     try:
         schedule_plan = validate_schedule(args.profile, args.steps or (100 if args.profile == "smoke" else 1000),

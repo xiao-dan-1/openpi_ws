@@ -56,7 +56,9 @@ datasets/q5/pick_orange_to_basket_v2_split.json
 assets/pi05_q5/q5_pick_orange_to_basket_v2_train/
 ```
 
-直接使用准备包不需运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
+准备包的划分清单包含下述元数据指纹时，可直接使用而不运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分、清单完整但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
+
+新划分清单必须在 `metadata_sha256` 下按 train/validation/test 记录各自 `meta/tasks.jsonl` 和 `meta/episodes.jsonl` 的 SHA-256。训练前验证任务文本指纹，以及轨迹编号、长度和指纹；`check_files=False` 仅跳过文件哈希比较，仍检查清单字段及轨迹边界。缺少字段的旧清单会拒绝，不能用当前文件哈希补签。保留旧实验匹配的代码、数据和清单；使用新代码时，在独立工作区从可信源重新划分并重算统计。清单摘要和 `runtime.py` 实现指纹都会改变，旧实验不能直接 resume；不要覆盖旧清单或绕过恢复校验。
 
 `cleaning_manifest.json` 是可选的自定义历史记录，不是 LeRobot 标准数据文件。有清单时校验并保留清理前轨迹编号；没有时仍可按源数据当前的 episode_index 完成 50/5/10 划分及训练统计，划分清单中 cleaning_history_available=false、original_episode_index=null。程序不会猜测此前删除过哪些轨迹，也不会重复删除 episode 0。已有但不完整或编号重复的清单会报错。
 
@@ -134,7 +136,7 @@ CPU检查：
 
 AdamW、梯度裁剪1.0、无EMA/W&B/梯度累积、seed42。batch1/workers0仅为服务器试跑起点。schedule=30000不是承诺训练30000步。
 
-finetune默认首段全在预热，入口要求显式 --continue-after-segment，否则报错。--steps是累计执行上限，--schedule-steps是调度长度，--warmup-steps可显式指定。启动时打印窗口样本预算及相对训练起点比例。1000步batch1约处理1000个窗口样本，相对17,382个起点约5.75%，不等于独立起点覆盖率，不适合判断最终效果。
+finetune默认首段全在预热，入口要求显式 --continue-after-segment，否则报错。--steps是累计执行上限，至少为2（上游一步训练最终保存的标签0不满足恢复要求）；--schedule-steps是调度长度，--warmup-steps可显式指定。启动时打印窗口样本预算及相对训练起点比例。1000步batch1约处理1000个窗口样本，相对17,382个起点约5.75%，不等于独立起点覆盖率，不适合判断最终效果。
 
 以下是保留的单卡用法示例，不代表当前双卡验收配置；已执行的batch16双卡命令与结果见[FSDP_TRAINING.md](FSDP_TRAINING.md)。正式总预算和调度尚未选定，下面finetune命令只是默认配置的用法。
 
@@ -159,6 +161,8 @@ nohup .venv/bin/python -B -u -m pipeline.q5.train \
 如决定总共只训练1000步，显式选择较短预热和匹配长度，例如 --warmup-steps 100 --schedule-steps 1000 --steps 1000。该选项不会自动替换与LIBERO对齐的默认计划。后续总预算结合服务器吞吐、实际batch和验证结果确定。
 
 恢复需保持模型、数据、统计、调度、全局batch、卡数、分片数量和代码一致；不能从旧55/10或不同冻结策略直接恢复为v2，使用新实验名。恢复前检查已提交检查点的步数及优化器计数器；训练结束校验最终保存并写入运行目录的 training_result.json。
+
+上游 resume 会重建数据迭代器；固定 batch 的保存恢复测试验证参数和优化器状态接续，不保证真实数据训练与不中断运行逐步等同。
 
 ## 验证集比较
 

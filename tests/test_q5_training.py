@@ -16,6 +16,27 @@ from pipeline.q5.train import require_resume_configuration
 
 
 class TrainingArgumentsTests(unittest.TestCase):
+    def test_steps_require_two_before_environment_preparation(self):
+        from pipeline.q5 import train
+        for steps in [-1, 0, 1]:
+            with self.subTest(steps=steps), \
+                 mock.patch.object(sys, "argv", ["train", "--gpu", "0", "--exp-name", "demo", "--steps", str(steps)]), \
+                 mock.patch.object(train, "prepare_environment") as environment, \
+                 contextlib.redirect_stderr(io.StringIO()) as stderr, \
+                 self.assertRaises(SystemExit) as exit:
+                train.main()
+            self.assertEqual(exit.exception.code, 2)
+            self.assertIn("--steps must be at least 2", stderr.getvalue())
+            environment.assert_not_called()
+
+    def test_two_steps_reaches_environment_preparation(self):
+        from pipeline.q5 import train
+        with mock.patch.object(sys, "argv", ["train", "--gpu", "0", "--exp-name", "demo", "--steps", "2"]), \
+             mock.patch.object(train, "prepare_environment", side_effect=RuntimeError("environment reached")) as environment:
+            with self.assertRaisesRegex(RuntimeError, "environment reached"):
+                train.main()
+            environment.assert_called_once()
+
     def test_single_gpu_compatible_and_dual_explicit(self):
         self.assertEqual(training_layout("2", None, 1)["fsdp_devices"], 1)
         self.assertEqual(training_layout("2,3", 2, 16)["per_device_batch"], 8)
@@ -99,6 +120,7 @@ class TrainingArgumentsTests(unittest.TestCase):
 
 class OfficialCheckpointTests(unittest.TestCase):
     def test_two_cpu_official_training_save_resume_matches_uninterrupted(self):
+        # The fixed batch checks parameter/optimizer restoration, not real loader continuity.
         # Separate process: force two CPU devices before the first JAX import.
         env = dict(os.environ, CUDA_VISIBLE_DEVICES="", JAX_PLATFORMS="cpu",
                    XLA_FLAGS="--xla_force_host_platform_device_count=2")

@@ -17,6 +17,7 @@ TRAIN_ID = "q5/pick_orange_to_basket_v2_train"
 VALIDATION_ID = "q5/pick_orange_to_basket_v2_validation"
 TEST_ID = "q5/pick_orange_to_basket_v2_test"
 SPLIT_COUNTS = {"train": 50, "validation": 5, "test": 10}
+SPLIT_METADATA_FILES = ("meta/tasks.jsonl", "meta/episodes.jsonl")
 FREEZE_POLICY = "model.get_freeze_filter() (same as LIBERO LoRA baseline)"
 VIDEO_BACKEND = "pyav"
 
@@ -117,6 +118,7 @@ def prepare_environment(paths, *, cpu=True, gpu=None, allow_multiple_gpus=False,
 
 
 def validate_split(paths, *, check_files=True):
+    """Check population and episode boundaries; optionally verify file digests."""
     require(not paths.split_manifest.with_suffix(".INCOMPLETE").exists(), "Split preparation is incomplete")
     m = json.loads(paths.split_manifest.read_text())
     require(m["status"] == "PASS", "Split has not passed validation")
@@ -136,16 +138,32 @@ def validate_split(paths, *, check_files=True):
     require(populations["test"] == set(m["locked_test_source_episode_ids"]), "Locked test population changed")
     for role, root in [("train", paths.train), ("validation", paths.validation), ("test", paths.test)]:
         records = m[role]
+        metadata = m.get("metadata_sha256")
+        metadata = metadata.get(role) if isinstance(metadata, dict) else None
+        require(isinstance(metadata, dict) and
+                all(isinstance(metadata.get(name), str) and len(metadata[name]) == 64
+                    for name in SPLIT_METADATA_FILES),
+                f"Missing {role} metadata fingerprints; preserve existing experiments and rebuild "
+                "the split and statistics from a trusted source in a separate workspace; do not backfill hashes")
         require(not (root / "INCOMPLETE").exists(), f"Incomplete {role} dataset")
         info = json.loads((root / "meta/info.json").read_text())
         require(info["splits"] == {role: f"0:{len(records)}"}, f"Incorrect {role} split metadata")
         require(info["total_episodes"] == len(records) and info["total_frames"] == sum(r["length"] for r in records), f"Incorrect {role} totals")
         require([r["output_episode_index"] for r in records] == list(range(len(records))), f"Nonconsecutive {role} episodes")
+        episodes = [json.loads(line) for line in (root / "meta/episodes.jsonl").read_text().splitlines() if line.strip()]
+        require(len(episodes) == len(records) and
+                all(isinstance(row, dict) and type(row.get("episode_index")) is int and
+                    type(row.get("length")) is int for row in episodes) and
+                {row["episode_index"]: row["length"] for row in episodes} ==
+                {row["output_episode_index"]: row["length"] for row in records},
+                f"Incorrect {role} episode IDs/lengths in meta/episodes.jsonl")
         from pipeline.q5.schema import JOINT_NAMES
         for key in ["action", "observation.state"]:
             if "features" in info:
                 require(info["features"][key]["names"] == list(JOINT_NAMES), f"Changed {role} joint order")
         if check_files:
+            for name in SPLIT_METADATA_FILES:
+                require(sha256(root / name) == metadata[name], f"Changed {role} metadata: {name}")
             for row in records:
                 require(sha256(root / row["data_path"]) == row["sha256"], f"Changed {role} Parquet: {row['data_path']}")
                 for asset in row.get("assets", []):
