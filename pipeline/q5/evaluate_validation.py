@@ -62,6 +62,11 @@ def main():
             from openpi import transforms
             packed = transforms.compose(data.repack_transforms.inputs)(item)
             expected = np.asarray(packed.pop("actions"), dtype=float)
+            require(
+                expected.shape == (10, 38) and np.isfinite(expected).all(),
+                f"Invalid validation actions: episode={record['output_episode_index']}, frame={frame}; "
+                "expected shape (10, 38) with finite values",
+            )
             noise = rng.standard_normal((10, 38)).astype(np.float32)
             predicted = np.asarray(policy.infer(packed, noise=noise)["actions"])
             require(predicted.shape == (10, 38) and np.isfinite(predicted).all(), "Invalid predicted Q5 actions")
