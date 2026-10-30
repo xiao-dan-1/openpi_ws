@@ -56,9 +56,9 @@ datasets/q5/pick_orange_to_basket_v2_split.json
 assets/pi05_q5/q5_pick_orange_to_basket_v2_train/
 ```
 
-准备包的划分清单包含下述元数据指纹时，可直接使用而不运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分、清单完整但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
+准备包可直接使用而不运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分、清单完整但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
 
-新划分清单必须在 `metadata_sha256` 下按 train/validation/test 记录各自 `meta/tasks.jsonl` 和 `meta/episodes.jsonl` 的 SHA-256。训练前验证任务文本指纹，以及轨迹编号、长度和指纹；`check_files=False` 仅跳过文件哈希比较，仍检查清单字段及轨迹边界。缺少字段的旧清单会拒绝，不能用当前文件哈希补签。保留旧实验匹配的代码、数据和清单；使用新代码时，在独立工作区从可信源重新划分并重算统计。清单摘要和 `runtime.py` 实现指纹都会改变，旧实验不能直接 resume；不要覆盖旧清单或绕过恢复校验。
+训练前核对各集合 `meta/episodes.jsonl` 的轨迹编号和长度与清单一致，并验证 Parquet、视频及时间记录指纹；`check_files=False` 仅跳过文件哈希比较，仍检查轨迹边界。新清单不生成 `metadata_sha256`，已有清单中的该字段直接忽略；无需修改旧 split 或重算统计。恢复训练仍要求实验记录中的配置、数据和实现指纹一致；本次修改改变了 `runtime.py` 实现指纹，旧实验能否 resume 需单独核对。
 
 `cleaning_manifest.json` 是可选的自定义历史记录，不是 LeRobot 标准数据文件。有清单时校验并保留清理前轨迹编号；没有时仍可按源数据当前的 episode_index 完成 50/5/10 划分及训练统计，划分清单中 cleaning_history_available=false、original_episode_index=null。程序不会猜测此前删除过哪些轨迹，也不会重复删除 episode 0。已有但不完整或编号重复的清单会报错。
 
