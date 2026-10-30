@@ -21,6 +21,25 @@ def choose_validation_ids(test_ids, seed=43):
     return sorted(rng.choice(candidates[i * 55 // 5:(i + 1) * 55 // 5]) for i in range(5))
 
 
+def read_original_episode_ids(source, episode_count):
+    """Optional cleaning history; never invent pre-cleaning episode identities."""
+    path = source / "cleaning_manifest.json"
+    if not path.is_file():
+        return {eid: None for eid in range(episode_count)}
+    rows = json.loads(path.read_text())["episode_mapping"]
+    require(len(rows) == episode_count, "Cleaning history must cover every source episode")
+    mapping = {}
+    for row in rows:
+        eid, original = row["new_episode_index"], row["original_episode_index"]
+        require(type(eid) is int and 0 <= eid < episode_count,
+                "Invalid source episode ID in cleaning history")
+        require(eid not in mapping, "Duplicate source episode ID in cleaning history")
+        require(type(original) is int and original >= 0, "Invalid original episode ID in cleaning history")
+        mapping[eid] = original
+    require(len(set(mapping.values())) == episode_count, "Duplicate original episode ID in cleaning history")
+    return mapping
+
+
 def prepare_split(paths, source, *, seed=42):
     from pipeline.data.exclude_episodes import run
     require(not any(p.exists() for p in (paths.train, paths.validation, paths.test, paths.split_manifest)), "Split output already exists; use --stats-only or inspect existing data")
@@ -37,7 +56,8 @@ def prepare_split(paths, source, *, seed=42):
         test_ids = locked
     validation_ids = set(choose_validation_ids(test_ids))
     train_ids = set(range(65)) - test_ids - validation_ids
-    source_map = {r["new_episode_index"]: r["original_episode_index"] for r in json.loads((source / "cleaning_manifest.json").read_text())["episode_mapping"]}
+    source_map = read_original_episode_ids(source, info["total_episodes"])
+    cleaning_history = source / "cleaning_manifest.json"
     marker = paths.split_manifest.with_suffix(".INCOMPLETE")
     marker.parent.mkdir(parents=True, exist_ok=True)
     with marker.open("x") as f:
@@ -46,7 +66,11 @@ def prepare_split(paths, source, *, seed=42):
                     locked_test_source_episode_ids=sorted(test_ids),
                     previous_split_sha256=sha256(previous) if previous.is_file() else None,
                     selection="original ten test episodes locked; five validation samples stratified within the remaining 55; no outcome-based selection",
-                    source=str(source), source_info_sha256=sha256(source / "meta/info.json"))
+                    source=str(source), source_info_sha256=sha256(source / "meta/info.json"),
+                    cleaning_history_available=cleaning_history.is_file(),
+                    cleaning_manifest_sha256=sha256(cleaning_history) if cleaning_history.is_file() else None,
+                    episode_identity="source_episode_index identifies the current source dataset; "
+                                     "original_episode_index is null when pre-cleaning history is unavailable")
     for role, destination, included in [("train", paths.train, train_ids), ("validation", paths.validation, validation_ids), ("test", paths.test, test_ids)]:
         excluded = set(range(65)) - included
         copied = run(source, destination, excluded)

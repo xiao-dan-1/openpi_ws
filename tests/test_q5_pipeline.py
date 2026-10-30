@@ -18,7 +18,7 @@ import jax
 import numpy as np
 
 from pipeline.q5.data import Q5Inputs, Q5Outputs
-from pipeline.q5.prepare_data import choose_test_ids, choose_validation_ids
+from pipeline.q5.prepare_data import choose_test_ids, choose_validation_ids, read_original_episode_ids
 from pipeline.q5.schema import JOINT_NAMES
 from pipeline.q5.weight_loaders import merge_trunk, PROJECTION_KEYS, Q5WeightLoader
 from pipeline.q5.runtime import Paths, require_stats, sha256, validate_split, configure_video_backend
@@ -73,6 +73,38 @@ class Q5ContractTests(unittest.TestCase):
         for actions in [np.zeros((10, 32)), np.full((10, 38), np.nan), np.zeros(38)]:
             with self.assertRaises(ValueError):
                 Q5Outputs()({"actions": actions})
+
+
+class Q5CleaningHistoryTests(unittest.TestCase):
+    def test_absent_history_keeps_original_ids_unknown_without_writing_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            self.assertEqual(read_original_episode_ids(source, 3), {0: None, 1: None, 2: None})
+            self.assertEqual(list(source.iterdir()), [])
+
+    def test_existing_history_preserves_ids_independently_of_record_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            path = source / "cleaning_manifest.json"
+            path.write_text(json.dumps({"episode_mapping": [
+                {"new_episode_index": 1, "original_episode_index": 9},
+                {"new_episode_index": 0, "original_episode_index": 4}]}))
+            before = path.read_bytes()
+            self.assertEqual(read_original_episode_ids(source, 2), {0: 4, 1: 9})
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_incomplete_or_ambiguous_history_is_not_silently_ignored(self):
+        base = [{"new_episode_index": 0, "original_episode_index": 4},
+                {"new_episode_index": 1, "original_episode_index": 9}]
+        for rows in [base[:1], [base[0], base[0]],
+                     [base[0], {"new_episode_index": 1, "original_episode_index": 4}],
+                     [base[0], {"new_episode_index": 2, "original_episode_index": 9}],
+                     [base[0], {"new_episode_index": 1, "original_episode_index": -1}]]:
+            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory)
+                (source / "cleaning_manifest.json").write_text(json.dumps({"episode_mapping": rows}))
+                with self.assertRaises(ValueError):
+                    read_original_episode_ids(source, 2)
 
 
 class Q5BaselineParityTests(unittest.TestCase):

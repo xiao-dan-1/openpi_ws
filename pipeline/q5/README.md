@@ -58,6 +58,8 @@ assets/pi05_q5/q5_pick_orange_to_basket_v2_train/
 
 直接使用准备包不需运行prepare_data。持有清理后的65条源数据且尚无v2产物时，可运行 python -B -m pipeline.q5.prepare_data；程序读取旧v1清单锁定测试身份，拒绝覆盖已有输出。--stats-only用于已划分但尚无新统计时。运行时路径按工作区解析，JSON中旧绝对路径只用于溯源。
 
+`cleaning_manifest.json` 是可选的自定义历史记录，不是 LeRobot 标准数据文件。有清单时校验并保留清理前轨迹编号；没有时仍可按源数据当前的 episode_index 完成 50/5/10 划分及训练统计，划分清单中 cleaning_history_available=false、original_episode_index=null。程序不会猜测此前删除过哪些轨迹，也不会重复删除 episode 0。已有但不完整或编号重复的清单会报错。
+
 CPU检查：
 
 ```bash
