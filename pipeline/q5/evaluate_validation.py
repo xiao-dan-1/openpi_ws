@@ -8,6 +8,7 @@ from pipeline.common.validation import experiment_name
 from pipeline.common.reporting import emit_report
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, validate_split, sha256, ASSET_ID, VALIDATION_ID
 from pipeline.q5.memory import add_memory_argument, memory_settings
+from pipeline.q5.split_identity import verify_training_split
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
     parser.add_argument("--step", required=True, type=int)
     parser.add_argument("--samples-per-episode", type=int, default=20)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--training-split-manifest", type=Path,
+                        help="Original training manifest, for verifying relocated data with different provenance metadata")
     parser.add_argument("--output", type=Path, help="Optionally save the validation report; otherwise print results only")
     add_memory_argument(parser)
     args = parser.parse_args()
@@ -34,7 +37,8 @@ def main():
     from pipeline.q5.config import build_config
     require(jax.default_backend() == "gpu" and jax.device_count() == 1, "Run validation on one server GPU")
     run = json.loads((paths.workspace / "runs/pi05_q5" / args.exp_name / "config.json").read_text())
-    require(run["split_manifest_sha256"] == sha256(paths.split_manifest), "Checkpoint split differs")
+    split_verification = verify_training_split(paths.split_manifest, run["split_manifest_sha256"],
+                                              args.training_split_manifest)
     require(run["norm_stats_sha256"] == statistics["sha256"], "Checkpoint training statistics differ")
     checkpoint = paths.workspace / "checkpoints/pi05_q5" / args.exp_name / str(args.step)
     require(checkpoint.is_dir(), "Checkpoint not found")
@@ -85,6 +89,7 @@ def main():
     report = {"status": "PASS", "allocator_settings": memory_settings(), "split": "validation", "episodes": len(rows), "seed": args.seed,
               "samples_per_episode_limit": args.samples_per_episode, "checkpoint": str(checkpoint),
               "norm_stats_sha256": statistics["sha256"], "test_observations_read": 0,
+              "split_verification": split_verification,
               "equal_episode_mae_rad": {k: float(np.mean([r["mae_rad"][k] for r in rows])) for k in groups},
               "equal_episode_first_action_mae_rad": {k: float(np.mean([r["first_action_mae_rad"][k] for r in rows])) for k in groups},
               "per_episode": rows, "padding_excluded_from_metrics": True,
