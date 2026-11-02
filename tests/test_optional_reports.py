@@ -133,9 +133,8 @@ class ValidationReportTests(unittest.TestCase):
                 console = io.StringIO()
                 with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(console), \
                      mock.patch.object(validation, "prepare_environment"), \
-                     mock.patch.object(validation, "require_stats", return_value={"sha256": sha256(stats)}), \
-                     mock.patch.object(validation, "validate_split", return_value={"validation": [
-                         {"length": 2, "output_episode_index": 0, "source_bag": "ep002"}]}), \
+                     mock.patch.object(validation, "require_stats", return_value=({"sha256": sha256(stats)}, {"validation": [
+                         {"length": 2, "output_episode_index": 0, "source_bag": "ep002"}]})), \
                      mock.patch("jax.default_backend", return_value="gpu"), \
                      mock.patch("jax.device_count", return_value=1), \
                      mock.patch("pipeline.q5.config.build_config", return_value=config), \

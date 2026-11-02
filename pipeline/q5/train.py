@@ -51,18 +51,16 @@ def main():
         parser.error("--steps must be at least 2 (the official trainer's checkpoint label 0 cannot be resumed)")
     if args.batch_size < 1 or args.num_workers < 0:
         parser.error("Batch must be positive; workers must be non-negative")
-    from pipeline.q5.schedule import validate_schedule
+    from pipeline.q5.schedule import resolve_schedule, validate_schedule
     try:
-        schedule_plan = validate_schedule(args.profile, args.steps or (100 if args.profile == "smoke" else 1000),
-                    args.warmup_steps if args.warmup_steps is not None else (10 if args.profile == "smoke" else 1000),
-                    args.schedule_steps if args.schedule_steps is not None else (1000 if args.profile == "smoke" else 30000),
-                    args.continue_after_segment)
+        steps, warmup, decay = resolve_schedule(args.profile, args.steps, args.warmup_steps, args.schedule_steps)
+        schedule_plan = validate_schedule(args.profile, steps, warmup, decay, args.continue_after_segment)
     except ValueError as exc:
         parser.error(str(exc))
     paths = Paths.create(args.workspace)
     revision = prepare_environment(paths, cpu=False, gpu=gpus, allow_multiple_gpus=layout["device_count"] > 1,
                                    memory_fraction=args.memory_fraction)
-    require_stats(paths)
+    stats_report = require_stats(paths)
     from pipeline.q5.config import build_config, describe, require_base_assets
     require_base_assets(paths)
     import jax
@@ -70,10 +68,10 @@ def main():
             and jax.process_count() == 1, "Expected selected GPUs on one server process")
     run_dir = paths.workspace / "runs/pi05_q5" / args.exp_name
     config = build_config(paths, profile=args.profile, exp_name=args.exp_name, batch_size=args.batch_size,
-                          steps=args.steps, num_workers=args.num_workers, resume=args.resume,
-                          warmup_steps=args.warmup_steps, schedule_steps=args.schedule_steps,
+                          steps=steps, num_workers=args.num_workers, resume=args.resume,
+                          warmup_steps=warmup, schedule_steps=decay,
                           weight_audit_path=run_dir / "weight_loading_report.json", fsdp_devices=layout["fsdp_devices"])
-    manifest = describe(paths, config, args.profile)
+    manifest = describe(paths, config, args.profile, stats_report=stats_report)
     manifest["upstream_commit"] = revision
     manifest["schedule_plan"] = schedule_plan
     manifest["allocator_settings"] = memory_settings()

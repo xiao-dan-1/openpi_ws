@@ -85,9 +85,14 @@ class TrainingArgumentsTests(unittest.TestCase):
             (paths.train / "meta").mkdir(parents=True)
             (paths.train / "meta/info.json").write_text('{"total_frames":17382}')
             paths.split_manifest.write_text("{}")
+            paths.stats.mkdir(parents=True)
+            (paths.stats / "norm_stats.json").write_text("{}")
+            from pipeline.q5.runtime import sha256
+            stats_digest = sha256(paths.stats / "norm_stats.json")
+            stats_report = {"sha256": stats_digest, "split_manifest_sha256": sha256(paths.split_manifest)}
             with mock.patch.object(train, "prepare_environment", return_value="revision") as environment, \
-                 mock.patch.object(train, "require_stats"), \
-                 mock.patch.object(config_module, "require_stats", return_value={"sha256": "stats"}), \
+                 mock.patch.object(train, "require_stats", return_value=stats_report) as preflight, \
+                 mock.patch.object(config_module, "require_stats", side_effect=AssertionError("Repeated preflight")), \
                  mock.patch.object(config_module, "require_base_assets"), \
                  mock.patch.object(jax, "default_backend", return_value="gpu"), \
                  mock.patch.object(jax, "device_count", return_value=2), \
@@ -111,12 +116,13 @@ class TrainingArgumentsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "--steps must exceed"):
                     train.main()
                 self.assertEqual(official.return_value.main.call_count, calls)
+                self.assertEqual(preflight.call_count, 3)
             config = official.return_value.main.call_args.args[0]
             self.assertEqual(config.fsdp_devices, 2)
             self.assertEqual(config.batch_size, 16)
             self.assertTrue(environment.call_args.kwargs["allow_multiple_gpus"])
             self.assertEqual(environment.call_args.kwargs["gpu"], "2,3")
-            self.assertTrue(all(call.args == (config.checkpoint_dir, "stats") for call in progress.call_args_list))
+            self.assertTrue(all(call.args == (config.checkpoint_dir, stats_digest) for call in progress.call_args_list))
             run = paths.workspace / "runs/pi05_q5/dual"
             manifest = json.loads((run / "config.json").read_text())
             self.assertEqual(manifest["parallelism"]["mesh_shape"], {"batch": 1, "fsdp": 2})

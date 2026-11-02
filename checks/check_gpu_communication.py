@@ -73,12 +73,17 @@ def query_smi(arguments):
 
 def snapshot(pair):
     gpu_rows = query_smi(["--query-gpu=index,uuid,name,memory.total,memory.used,utilization.gpu", "--format=csv,noheader,nounits"])
-    selected = set(pair.split(","))
-    devices = [{"index": r[0].strip(), "uuid": r[1].strip(), "name": r[2].strip(),
+    available = [{"index": r[0].strip(), "uuid": r[1].strip(), "name": r[2].strip(),
                 "total_mib": r[3].strip(), "used_mib": r[4].strip(), "utilization_percent": r[5].strip()}
-               for r in gpu_rows if r and r[0].strip() in selected]
-    if len(devices) != len(selected):
-        raise ValueError(f"Could not resolve GPU pair {pair}")
+               for r in gpu_rows if len(r) >= 6]
+    devices = []
+    for selector in pair.split(","):
+        matches = [device for device in available if
+                   (selector.isdigit() and device["index"] == str(int(selector))) or
+                   (selector.startswith("GPU-") and device["uuid"].startswith(selector))]
+        if len(matches) != 1 or matches[0]["uuid"] in {d["uuid"] for d in devices}:
+            raise ValueError(f"Could not resolve distinct GPUs: {pair}")
+        devices.append(matches[0])
     uuids = {d["uuid"] for d in devices}
     processes = query_smi(["--query-compute-apps=gpu_uuid,pid,process_name,used_memory", "--format=csv,noheader,nounits"])
     active = [{"gpu_uuid": r[0].strip(), "pid": r[1].strip(), "name": r[2].strip(), "used_mib": r[3].strip()}

@@ -1,14 +1,12 @@
 """Workspace paths, provenance checks and offline environment; no model imports."""
 import dataclasses
-import hashlib
-import importlib
 import json
-import os
 from pathlib import Path
-import subprocess
 import sys
 
-from pipeline.common.config import UPSTREAM_COMMIT, SUPPORTED_LOCAL_COMMITS
+from pipeline.common import runtime as common_runtime
+from pipeline.common.runtime import UPSTREAM_COMMIT, SUPPORTED_LOCAL_COMMITS, sha256
+from pipeline.common.validation import require, gpu_selectors
 from pipeline.q5.memory import DEFAULT_MEMORY_FRACTION, configure_memory_fraction
 
 NAME = "pi05_q5"
@@ -39,15 +37,6 @@ def configure_video_backend():
     video_utils.get_safe_default_codec = _q5_default_video_backend
     lerobot_dataset.get_safe_default_codec = _q5_default_video_backend
     return av.__version__
-
-
-def require(condition, message):
-    if not condition:
-        raise ValueError(message)
-
-
-def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,30 +75,14 @@ class Paths:
 def prepare_environment(paths, *, cpu=True, gpu=None, allow_multiple_gpus=False,
                         memory_fraction=DEFAULT_MEMORY_FRACTION):
     repo = paths.workspace / "openpi"
-    revision = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-    require(revision in {UPSTREAM_COMMIT, *SUPPORTED_LOCAL_COMMITS}, f"Unreviewed OpenPI revision: {revision}")
-    dirty = subprocess.check_output([
-        "git", "-C", str(repo), "diff", "HEAD", "--name-only", "--", "src/openpi",
-        "scripts/train.py", "scripts/compute_norm_stats.py"], text=True).strip()
-    require(not dirty, f"Unreviewed OpenPI runtime edits: {dirty}")
-    os.environ.update(HF_HUB_OFFLINE="1", HF_DATASETS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1",
-                      TOKENIZERS_PARALLELISM="false", HF_LEROBOT_HOME=str(paths.workspace / "datasets"),
-                      HF_DATASETS_CACHE=str(paths.workspace / ".cache/huggingface/q5"),
-                      OPENPI_DATA_HOME=str(paths.workspace / "openpi_cache"),
-                      OMP_NUM_THREADS="2", MKL_NUM_THREADS="2", OPENBLAS_NUM_THREADS="2")
-    os.environ.pop("LEROBOT_HOME", None)
-    sys.dont_write_bytecode = True
-    if cpu:
-        os.environ.update(CUDA_VISIBLE_DEVICES="", JAX_PLATFORMS="cpu")
-    else:
-        if allow_multiple_gpus:
-            selectors = gpu.split(",") if gpu else []
-            require(selectors and len(selectors) == len(set(selectors)) and
-                    all(s.isdigit() or s.startswith("GPU-") for s in selectors), "Specify distinct server GPU selectors")
-        else:
-            require(gpu and (gpu.isdigit() or (gpu.startswith("GPU-") and "," not in gpu)), "Specify one server GPU")
-        os.environ["CUDA_VISIBLE_DEVICES"] = gpu
-        os.environ.pop("JAX_PLATFORMS", None)
+    # Q5's exact reviewed SHA whitelist also supports shallow local checkouts.
+    revision = common_runtime.verify_upstream_revision(repo, verify_ancestry=False)
+    if not cpu:
+        gpu = gpu_selectors(gpu or "")
+        require(allow_multiple_gpus or "," not in gpu, "Specify one server GPU")
+    common_runtime.prepare_environment(paths.workspace, cpu=cpu, gpu=gpu,
+                                       cache_dir=paths.workspace / ".cache/huggingface/q5")
+    if not cpu:
         configure_memory_fraction(memory_fraction)
     sys.path.insert(0, str(repo / "src"))
     configure_video_backend()
@@ -137,6 +110,7 @@ def validate_split(paths, *, check_files=True):
     require(populations["test"] == set(m["locked_test_source_episode_ids"]), "Locked test population changed")
     for role, root in [("train", paths.train), ("validation", paths.validation), ("test", paths.test)]:
         records = m[role]
+        require(len({row["data_path"] for row in records}) == len(records), f"Duplicate {role} Parquet paths")
         require(not (root / "INCOMPLETE").exists(), f"Incomplete {role} dataset")
         info = json.loads((root / "meta/info.json").read_text())
         require(info["splits"] == {role: f"0:{len(records)}"}, f"Incorrect {role} split metadata")
@@ -166,8 +140,8 @@ def validate_split(paths, *, check_files=True):
     return m
 
 
-def require_stats(paths):
-    validate_split(paths)
+def require_stats(paths, *, with_manifest=False):
+    manifest = validate_split(paths)
     info_path = paths.train / "meta/info.json"
     info = json.loads(info_path.read_text())
     report = json.loads((paths.stats / "statistics_run.json").read_text())
@@ -184,15 +158,14 @@ def require_stats(paths):
     require(report["sha256"] == sha256(paths.stats / "norm_stats.json"), "Statistics file changed")
     from pipeline.q5.schema import JOINT_NAMES
     require(report["joint_names"] == list(JOINT_NAMES), "Statistics joint order mismatch")
-    manifest = json.loads(paths.split_manifest.read_text())
     require({r["path"] for r in report["source_parquet_fingerprints"]} == {r["data_path"] for r in manifest["train"]}, "Statistics file population differs from training split")
-    for row in report["source_parquet_fingerprints"]:
-        require(sha256(paths.train / row["path"]) == row["sha256"], "Statistics training data changed")
-    return report
+    fingerprints = report["source_parquet_fingerprints"]
+    require(len({row["path"] for row in fingerprints}) == len(fingerprints), "Duplicate statistics file fingerprints")
+    verified = {row["data_path"]: row["sha256"] for row in manifest["train"]}
+    for row in fingerprints:
+        require(verified[row["path"]] == row["sha256"], "Statistics training data changed")
+    return (report, manifest) if with_manifest else report
 
 
 def official_train_module(paths):
-    sys.path.insert(0, str(paths.workspace / "openpi"))
-    module = importlib.import_module("scripts.train")
-    require(Path(module.__file__).resolve() == paths.workspace / "openpi/scripts/train.py", "Unexpected official trainer")
-    return module
+    return common_runtime.load_official_script(paths.workspace, "train")

@@ -4,8 +4,27 @@ import dataclasses
 import json
 from pathlib import Path
 from pipeline.common.reporting import emit_report
+from pipeline.common.tokenization import checked_token_length
 
-from pipeline.q5.runtime import Paths, prepare_environment, require_stats, require, validate_split, FREEZE_POLICY
+from pipeline.q5.runtime import Paths, prepare_environment, require_stats, require, FREEZE_POLICY
+
+
+def audit_state_token_lengths(root, records, state_normalizer, tokenizer, limit):
+    """Audit each split against its own task metadata without decoding videos."""
+    import numpy as np
+    import pyarrow.parquet as pq
+    tasks = {row["task_index"]: row["task"] for row in
+             (json.loads(line) for line in (root / "meta/tasks.jsonl").read_text().splitlines() if line.strip())}
+    maximum, frames = 0, 0
+    for record in records:
+        table = pq.read_table(root / record["data_path"], columns=["observation.state", "task_index"])
+        states = np.asarray(table["observation.state"].to_pylist(), dtype=np.float32)
+        normalized = state_normalizer({"state": states})["state"]
+        for state, task_id in zip(normalized, table["task_index"].to_pylist(), strict=True):
+            count = checked_token_length(tokenizer, tasks[task_id], state, limit)
+            maximum = max(maximum, count)
+            frames += 1
+    return maximum, frames
 
 
 def main():
@@ -15,14 +34,14 @@ def main():
     args = parser.parse_args()
     paths = Paths.create(args.workspace)
     revision = prepare_environment(paths, cpu=True)
-    stats_report = require_stats(paths)
+    stats_report, manifest = require_stats(paths, with_manifest=True)
     from pipeline.q5.config import build_config, require_base_assets
     require_base_assets(paths)
     import flax.nnx as nnx
     import numpy as np
-    import pyarrow.parquet as pq
     import torch
     from openpi import transforms
+    from openpi.models.tokenizer import PaligemmaTokenizer
     from openpi.training import data_loader
     torch.set_num_threads(2)
     config = build_config(paths)
@@ -36,12 +55,13 @@ def main():
     dataset = data_loader.transform_dataset(raw, data)
     info = json.loads((paths.train / "meta/info.json").read_text())
     require(len(dataset) == info["total_frames"], "Unexpected training population")
-    manifest = validate_split(paths)
     from pipeline.q5.data_contract import check_data_contract
     contract_report = check_data_contract(paths, data, manifest)
     starts = np.cumsum([0] + [r["length"] for r in manifest["train"][:-1]])
     tokenizer_transform = next(t for t in data.model_transforms.inputs if isinstance(t, transforms.TokenizePrompt))
     tokenizer = tokenizer_transform.tokenizer
+    # An overflow sentinel detects truncation through the official public API.
+    length_tokenizer = PaligemmaTokenizer(max_len=config.model.max_token_len + 1)
     results = []
     maximum_tokens = 0
     for ep in [0, len(manifest["train"]) // 2, len(manifest["train"]) - 1]:
@@ -57,10 +77,8 @@ def main():
                     and not bool(item["image_mask"]["right_wrist_0_rgb"]), "Incorrect camera masks")
             repacked = transforms.compose([*data.repack_transforms.inputs, *data.data_transforms.inputs,
                                           transforms.Normalize(data.norm_stats, use_quantiles=True)])(raw[index])
-            state_string = " ".join(map(str, np.digitize(repacked["state"], bins=np.linspace(-1, 1, 257)[:-1]) - 1))
-            prompt = repacked["prompt"].strip().replace("_", " ").replace("\n", " ")
-            token_count = len(tokenizer._tokenizer.encode(f"Task: {prompt}, State: {state_string};\nAction: ", add_bos=True))
-            require(token_count <= config.model.max_token_len, "Real Q5 state tokens would be truncated")
+            prompt = repacked["prompt"]
+            token_count = checked_token_length(length_tokenizer, prompt, repacked["state"], config.model.max_token_len)
             changed = repacked["state"].copy()
             changed[37] = -1.0 if changed[37] > 0 else 1.0
             original_tokens, _ = tokenizer.tokenize(prompt, repacked["state"])
@@ -70,22 +88,10 @@ def main():
             results.append({"episode": ep, "frame": frame, "tokens": token_count})
     # Check token lengths for every training state without decoding all videos.
     maximum_sample_tokens = maximum_tokens
-    tasks = {t["task_index"]: t["task"] for t in
-             (json.loads(line) for line in (paths.train / "meta/tasks.jsonl").read_text().splitlines() if line.strip())}
-    training_states_checked = 0
     state_normalizer = transforms.Normalize({"state": data.norm_stats["state"]}, use_quantiles=True)
-    for record in manifest["train"]:
-        table = pq.read_table(paths.train / record["data_path"], columns=["observation.state", "task_index"])
-        states = np.asarray(table["observation.state"].to_pylist(), dtype=np.float32)
-        normalized_states = state_normalizer({"state": states})["state"]
-        codes = np.digitize(normalized_states, bins=np.linspace(-1, 1, 257)[:-1]) - 1
-        for state_codes, task_id in zip(codes, table["task_index"].to_pylist(), strict=True):
-            prompt = tasks[task_id].strip().replace("_", " ").replace("\n", " ")
-            state_string = " ".join(map(str, state_codes))
-            count = len(tokenizer._tokenizer.encode(f"Task: {prompt}, State: {state_string};\nAction: ", add_bos=True))
-            require(count <= config.model.max_token_len, "A training state prompt exceeds the token limit")
-            maximum_tokens = max(maximum_tokens, count)
-            training_states_checked += 1
+    training_token_maximum, training_states_checked = audit_state_token_lengths(
+        paths.train, manifest["train"], state_normalizer, length_tokenizer, config.model.max_token_len)
+    maximum_tokens = max(maximum_tokens, training_token_maximum)
     require(training_states_checked == len(dataset), "Incomplete training-state token audit")
     # Validation is loaded separately, with the training statistics. No test
     # observations are read by either sample pipeline.
@@ -96,20 +102,8 @@ def main():
     validation_dataset = data_loader.transform_dataset(validation_raw, validation_data)
     validation_frames = sum(r["length"] for r in manifest["validation"])
     require(len(validation_dataset) == validation_frames, "Wrong validation population")
-    validation_token_maximum = 0
-    validation_states_checked = 0
-    for record in manifest["validation"]:
-        table = pq.read_table(paths.validation / record["data_path"], columns=["observation.state", "task_index"])
-        states = np.asarray(table["observation.state"].to_pylist(), dtype=np.float32)
-        normalized = state_normalizer({"state": states})["state"]
-        codes = np.digitize(normalized, bins=np.linspace(-1, 1, 257)[:-1]) - 1
-        for state_codes, task_id in zip(codes, table["task_index"].to_pylist(), strict=True):
-            prompt = tasks[task_id].strip().replace("_", " ").replace("\n", " ")
-            state_string = " ".join(map(str, state_codes))
-            count = len(tokenizer._tokenizer.encode(f"Task: {prompt}, State: {state_string};\nAction: ", add_bos=True))
-            require(count <= config.model.max_token_len, "A validation state prompt exceeds the token limit")
-            validation_token_maximum = max(validation_token_maximum, count)
-            validation_states_checked += 1
+    validation_token_maximum, validation_states_checked = audit_state_token_lengths(
+        paths.validation, manifest["validation"], state_normalizer, length_tokenizer, config.model.max_token_len)
     require(validation_states_checked == validation_frames, "Incomplete validation-state token audit")
     for index in [0, validation_frames // 2, validation_frames - 1]:
         item = validation_dataset[index]

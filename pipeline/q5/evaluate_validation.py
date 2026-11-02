@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pipeline.common.validation import experiment_name
 from pipeline.common.reporting import emit_report
-from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, validate_split, sha256, ASSET_ID, VALIDATION_ID
+from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, sha256, ASSET_ID, VALIDATION_ID
 from pipeline.q5.memory import add_memory_argument, memory_settings
 from pipeline.q5.split_identity import verify_training_split
 
@@ -28,8 +28,7 @@ def main():
         parser.error("Step must be nonnegative and sample count positive")
     paths = Paths.create(args.workspace)
     prepare_environment(paths, cpu=False, gpu=args.gpu, memory_fraction=args.memory_fraction)
-    statistics = require_stats(paths)
-    manifest = validate_split(paths)
+    statistics, manifest = require_stats(paths, with_manifest=True)
     import jax
     import numpy as np
     from openpi.policies import policy_config

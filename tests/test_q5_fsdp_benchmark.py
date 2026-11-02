@@ -76,12 +76,12 @@ class FsdpProbeTests(unittest.TestCase):
     def test_normal_training_environment_stays_single_gpu(self):
         from pipeline.q5 import runtime
         with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ), \
-             mock.patch.object(runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
+             mock.patch.object(runtime.common_runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
              mock.patch.object(runtime, "configure_video_backend"):
             with self.assertRaisesRegex(ValueError, "one server GPU"):
                 runtime.prepare_environment(runtime.Paths.create(temporary), cpu=False, gpu="2,3")
         with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ), \
-             mock.patch.object(runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
+             mock.patch.object(runtime.common_runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
              mock.patch.object(runtime, "configure_video_backend"):
             runtime.prepare_environment(runtime.Paths.create(temporary), cpu=False, gpu="2,3", allow_multiple_gpus=True)
             self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "2,3")

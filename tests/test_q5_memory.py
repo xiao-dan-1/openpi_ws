@@ -35,7 +35,7 @@ class Q5MemoryTests(unittest.TestCase):
     def test_runtime_applies_requested_budget_for_both_cards(self):
         from pipeline.q5 import runtime
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ), \
-             mock.patch.object(runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
+             mock.patch.object(runtime.common_runtime.subprocess, "check_output", side_effect=[runtime.UPSTREAM_COMMIT, ""]), \
              mock.patch.object(runtime, "configure_video_backend"):
             runtime.prepare_environment(runtime.Paths.create(directory), cpu=False, gpu="1,2",
                                         allow_multiple_gpus=True, memory_fraction=0.65)

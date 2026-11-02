@@ -4,6 +4,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from pipeline.q5.runtime import require
+from pipeline.common.qc import COUNTERS, require_training_qc
 from pipeline.q5.schema import JOINT_NAMES, STATE_UNITS, ACTION_UNITS, ACTION_REPRESENTATION
 
 
@@ -21,7 +22,7 @@ def check_data_contract(paths, data_config, manifest):
         require(info["fps"] == 30, "Unexpected Q5 control/data rate")
         for key in ["action", "observation.state"]:
             require(info["features"][key]["names"] == list(JOINT_NAMES), "Joint names/order mismatch")
-        counters = {k: 0 for k in ["no_state", "no_action", "stale_state", "stale_action", "disorder", "age_a_future"]}
+        counters = dict.fromkeys(COUNTERS, 0)
         max_drift = max_state_age = max_action_age = max_pts_error = 0.0
         intervals, frames, max_error = [], 0, 0.0
         for row in manifest[role]:
@@ -47,11 +48,11 @@ def check_data_contract(paths, data_config, manifest):
             require(len(stamps) == n and np.isfinite(stamps).all() and np.all(np.diff(stamps) > 0), "Invalid source image timestamps")
             intervals.extend(np.diff(stamps).tolist())
             max_drift = max(max_drift, float(np.abs(stamps - np.arange(n) / 30).max()))
-            qc = timing["qc"]
+            qc = require_training_qc(timing.get("qc", {}))
             for key in counters:
-                counters[key] += qc.get(key, 0)
-            max_state_age = max(max_state_age, qc["age_s_max"] or 0)
-            max_action_age = max(max_action_age, qc["age_a_max"] or 0)
+                counters[key] += qc[key]
+            max_state_age = max(max_state_age, qc["age_s_max"])
+            max_action_age = max(max_action_age, qc["age_a_max"])
             frames += n
         require(all(counters[k] == 0 for k in ["stale_state", "stale_action", "disorder", "age_a_future"]),
                 f"Source converter QC flags in {role}: {counters}")

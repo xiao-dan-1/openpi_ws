@@ -4,72 +4,36 @@ Import this module before JAX; call prepare_environment before importing OpenPI.
 No upstream repository files are modified.
 """
 import dataclasses
-import importlib
 import hashlib
 import json
 import os
-import sys
-import subprocess
 from pathlib import Path
 
+from pipeline.common import runtime
+from pipeline.common.runtime import UPSTREAM_COMMIT, SUPPORTED_LOCAL_COMMITS
+from pipeline.common.validation import gpu_selectors
+
 WORKSPACE = Path(__file__).resolve().parents[2]
-UPSTREAM_COMMIT = "215abfb217dbac7d5f1273282331b9b1866c0479"
-# Reviewed local descendant: dataset-root support, bounded Orbax I/O, and WSLg
-# viewer/deployment tools. Model, policy, trainer and evaluator code match the
-# pinned baseline. Unknown descendants still require an explicit review.
-SUPPORTED_LOCAL_COMMITS = frozenset({
-    "13a95ea16adeee33b7efd49f8f3dadc6aebe20b9",
-    # Packaged pipeline entrypoint and lower I/O default; runtime code unchanged.
-    "eacc6a831df78bd8de7ef0804f48ef32f6de0052",
-})
 SOURCE_REPO_ID = "physical-intelligence/libero"
 LOCAL_REPO_ID = "libero"
 
 
 def verify_upstream_revision():
-    repo = WORKSPACE / "openpi"
-    actual = subprocess.check_output(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-    if actual != UPSTREAM_COMMIT:
-        if actual not in SUPPORTED_LOCAL_COMMITS:
-            raise ValueError(f"Expected OpenPI {UPSTREAM_COMMIT} or a reviewed local revision, found {actual}")
-        subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", UPSTREAM_COMMIT, actual],
-            check=True, capture_output=True, text=True,
-        )
-    dirty = subprocess.check_output(
-        ["git", "-C", str(repo), "diff", "HEAD", "--name-only", "--",
-         "src/openpi", "scripts/train.py", "scripts/compute_norm_stats.py", "examples/libero/main.py"],
-        text=True,
-    ).strip()
-    if dirty:
-        raise ValueError(f"Unreviewed changes in local OpenPI runtime code: {dirty}")
-    return actual
+    return runtime.verify_upstream_revision(
+        WORKSPACE / "openpi", protected_paths=(*runtime.RUNTIME_PATHS, "examples/libero/main.py"))
 
 
 def prepare_environment(*, cpu=True, gpu=None, cache_dir=None):
-    sys.dont_write_bytecode = True
     if not (WORKSPACE / "datasets/libero/meta/info.json").is_file():
         raise FileNotFoundError("Expected workspace/datasets/libero/meta/info.json")
     verify_upstream_revision()
-    os.environ.update({
-        "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
-        "HF_HUB_DISABLE_TELEMETRY": "1", "TOKENIZERS_PARALLELISM": "false",
-        "HF_LEROBOT_HOME": str(WORKSPACE / "datasets"),
-        "HF_DATASETS_CACHE": str(Path(cache_dir).resolve() if cache_dir else
-                                 WORKSPACE / ".cache/huggingface/datasets"),
-        "OPENPI_DATA_HOME": str(WORKSPACE / "openpi_cache"),
-        "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2",
-    })
-    os.environ.pop("LEROBOT_HOME", None)
-    if cpu:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        os.environ["JAX_PLATFORMS"] = "cpu"
-    else:
-        if not gpu or not (gpu.isdigit() or (gpu.startswith("GPU-") and "," not in gpu)):
+    if not cpu:
+        gpu = gpu_selectors(gpu or "")
+        if "," in gpu:
             raise ValueError("--gpu must specify one allocated GPU index or GPU-UUID")
-        os.environ["CUDA_VISIBLE_DEVICES"] = gpu
-        os.environ.pop("JAX_PLATFORMS", None)
+    runtime.prepare_environment(WORKSPACE, cpu=cpu, gpu=gpu, cache_dir=cache_dir)
+    if not cpu:
+        os.environ.pop("XLA_CLIENT_MEM_FRACTION", None)
         os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
 
 
@@ -128,11 +92,7 @@ def build_config(*, profile="smoke", exp_name="smoke", batch_size=None, steps=No
 
 
 def require_assets(config, *, stats=True, weights=False, full_stats=False):
-    tokenizer = WORKSPACE / "openpi_cache/big_vision/paligemma_tokenizer.model"
-    if not tokenizer.is_file():
-        raise FileNotFoundError(f"Missing official tokenizer: {tokenizer}")
-    if hashlib.sha256(tokenizer.read_bytes()).hexdigest() != "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6":
-        raise ValueError("Tokenizer SHA256 does not match the validated official asset")
+    runtime.require_tokenizer(WORKSPACE)
     if stats:
         path = config.assets_dirs / LOCAL_REPO_ID / "norm_stats.json"
         if not path.is_file():
@@ -147,20 +107,11 @@ def require_assets(config, *, stats=True, weights=False, full_stats=False):
             if report.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
                 raise ValueError("Active statistics changed since their official computation")
     if weights:
-        params = WORKSPACE / "openpi_cache/openpi-assets/checkpoints/pi05_base/params"
-        if not (params / "_METADATA").is_file() or not (params / "manifest.ocdbt").is_file():
-            raise FileNotFoundError(f"Missing pi05_base Orbax parameters: {params}")
+        runtime.require_base_params(WORKSPACE / "openpi_cache/openpi-assets/checkpoints/pi05_base/params")
 
 
 def load_official_script(name):
-    # A normal importable module name lets spawned DataLoader workers unpickle
-    # the official RemoveStrings transform. A process-only importlib alias cannot.
-    root = WORKSPACE / "openpi"
-    sys.path.insert(0, str(root))
-    module = importlib.import_module(f"scripts.{name}")
-    if Path(module.__file__).resolve() != (root / "scripts" / f"{name}.py").resolve():
-        raise ImportError(f"Unexpected official script location: {module.__file__}")
-    return module
+    return runtime.load_official_script(WORKSPACE, name)
 
 
 def describe(config, profile):

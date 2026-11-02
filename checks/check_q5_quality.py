@@ -16,6 +16,10 @@ import numpy as np
 import pyarrow.parquet as pq
 from PIL import Image, ImageDraw
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pipeline.common.qc import COUNTERS, MAXIMA, MINIMA, fields as qc_fields, is_number
+
 
 def jsonl(path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -39,24 +43,21 @@ def source_qc(root, episode_ids):
     """Summarize converter provenance; these counters are not raw-bag revalidation."""
     rows = []
     topics = {}
-    total_keys = ("output_images", "source_images", "no_state", "no_action", "stale_state",
-                  "stale_action", "disorder", "age_a_future")
-    max_keys = ("age_s_max", "age_a_max", "back_max")
-    min_keys = ("age_s_min", "age_a_min")
+    total_keys = ("output_images", "source_images", *COUNTERS)
+    max_keys, min_keys = MAXIMA, MINIMA
     for path in sorted((root / "meta/timing").glob("episode_*.json")):
         d = json.loads(path.read_text())
         qc = d.get("qc", {})
         row = {"episode": int(path.stem.split("_")[-1]),
                "output_images": len(d["relative_image_stamps"]) if "relative_image_stamps" in d else None,
                "source_images": qc.get("n_img")}
-        for key in (*total_keys[2:], *max_keys, *min_keys):
-            row[key] = qc.get(key)
+        row.update(qc_fields(qc))
         rows.append(row)
         for topic, values in qc.get("gaps", {}).items():
             topics.setdefault(topic, []).append(values)
     expected, found = set(episode_ids), {r["episode"] for r in rows}
     selected = [r for r in rows if r["episode"] in expected]
-    observed = {k: [r[k] for r in selected if isinstance(r[k], (int, float)) and np.isfinite(r[k])]
+    observed = {k: [r[k] for r in selected if is_number(r[k])]
                 for k in (*total_keys, *max_keys, *min_keys)}
     # Aggregate values describe the entire dataset only with complete coverage.
     def aggregate(key, operation):

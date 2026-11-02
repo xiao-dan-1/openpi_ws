@@ -1,6 +1,5 @@
 """Explicit single/dual-GPU Q5 capacity/throughput probe; no saved checkpoints."""
 import argparse
-import dataclasses
 import json
 import math
 import os
@@ -10,13 +9,7 @@ import time
 
 from pipeline.q5.runtime import Paths, prepare_environment, require, require_stats, official_train_module
 from pipeline.q5.memory import add_memory_argument, memory_settings
-
-
-def gpu_selectors(value):
-    parts = value.split(",")
-    if len(parts) not in (1, 2) or len(parts) != len(set(parts)) or not all(p.isdigit() for p in parts):
-        raise argparse.ArgumentTypeError("Use one index or two distinct indices, e.g. 2 or 2,3")
-    return value
+from pipeline.q5.parallelism import gpu_selectors, training_layout
 
 
 def sharded_state_storage(params):
@@ -74,11 +67,12 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=Path, help="Optional JSON report; default prints only")
     add_memory_argument(parser)
     args = parser.parse_args(argv)
-    count = len(args.gpus.split(","))
-    if args.fsdp_devices != count:
-        parser.error("For this probe use one GPU/fsdp=1 or two GPUs/fsdp=2; ordinary replicated data parallelism is not tested")
-    if args.batch_size < 1 or args.batch_size % count or args.warmup_steps < 3 or args.measure_steps < 2:
-        parser.error("Global batch must divide evenly by GPU count; require warmup>=3 and measurement>=2")
+    try:
+        training_layout(args.gpus, args.fsdp_devices, args.batch_size)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.warmup_steps < 3 or args.measure_steps < 2:
+        parser.error("Require warmup>=3 and measurement>=2")
     if args.num_workers < 0:
         parser.error("num-workers must be non-negative")
     if args.output is not None and args.output.exists():
@@ -109,8 +103,8 @@ def main():
                       "num_workers": args.num_workers, "timing_mode": args.timing_mode,
                       "memory_fraction": args.memory_fraction, "allocator_settings": memory_settings(), "other_processes": initial_other,
                       "checkpoints_saved": False}, indent=2), flush=True)
-    config = dataclasses.replace(build_config(paths, profile="smoke", batch_size=args.batch_size, num_workers=args.num_workers),
-                                 fsdp_devices=args.fsdp_devices)
+    config = build_config(paths, profile="smoke", batch_size=args.batch_size, num_workers=args.num_workers,
+                          fsdp_devices=args.fsdp_devices)
     official = official_train_module(paths)
     mesh = sharding.make_mesh(config.fsdp_devices)
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
