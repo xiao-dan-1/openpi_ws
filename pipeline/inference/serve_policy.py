@@ -19,7 +19,8 @@ def experiment_config(robot, exp_name):
     require(record_path.is_file(), f"Missing {robot} training record: {record_path}; check --robot")
     original = json.loads(record_path.read_text())
     upstream = original.get("upstream_commit" if robot == "q5" else "upstream_commit_expected")
-    require(upstream == runtime.UPSTREAM_COMMIT, "Training record has a different upstream commit")
+    supported = (runtime.UPSTREAM_COMMIT, *runtime.SUPPORTED_LOCAL_COMMITS) if robot == "q5" else (runtime.UPSTREAM_COMMIT,)
+    require(upstream in supported, f"Training record has an unsupported upstream commit: {upstream}")
     if robot == "q5":
         from pipeline.q5.config import build_config
         from pipeline.q5.runtime import ASSET_ID, Paths
@@ -53,7 +54,8 @@ def main():
         parser.error("step must be non-negative; port must be 1..65535")
     if "," in args.gpu:
         parser.error("Policy inference requires one GPU")
-    runtime.verify_upstream_revision(WORKSPACE / "openpi")
+    # Match Q5 training's exact revision whitelist, including shallow checkouts.
+    runtime.verify_upstream_revision(WORKSPACE / "openpi", verify_ancestry=args.robot != "q5")
     runtime.prepare_environment(WORKSPACE, cpu=False, gpu=args.gpu)
     configure_memory_fraction(args.memory_fraction)
     sys.path.insert(0, str(WORKSPACE / "openpi/src"))

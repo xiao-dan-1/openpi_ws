@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -27,9 +28,10 @@ class ServePolicyTests(unittest.TestCase):
     def setUp(self):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
-        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory())).resolve()
         self.stack.enter_context(mock.patch.dict(os.environ))
         self.stack.enter_context(mock.patch.object(serve_policy, "WORKSPACE", self.root))
+        self.verify_revision = serve_policy.runtime.verify_upstream_revision
         self.revision = self.stack.enter_context(mock.patch.object(serve_policy.runtime, "verify_upstream_revision"))
         self.environment = self.stack.enter_context(mock.patch.object(serve_policy.runtime, "prepare_environment"))
         self.stack.enter_context(mock.patch.object(serve_policy.runtime, "require_tokenizer"))
@@ -127,6 +129,51 @@ class ServePolicyTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "model|upstream"):
                 self.invoke()
             self.create_policy.assert_not_called()
+
+    def test_q5_accepts_all_reviewed_training_revisions(self):
+        self.fixture()
+        for revision in [serve_policy.runtime.UPSTREAM_COMMIT, *sorted(serve_policy.runtime.SUPPORTED_LOCAL_COMMITS)]:
+            with self.subTest(revision=revision):
+                self.record_path.write_text(json.dumps({**self.record, "upstream_commit": revision}))
+                self.invoke()
+                self.assertEqual(self.create_policy.call_args.args, (self.config, self.checkpoint))
+
+    def test_q5_reviewed_shallow_checkout_does_not_require_ancestry(self):
+        self.fixture()
+        revision = sorted(serve_policy.runtime.SUPPORTED_LOCAL_COMMITS)[0]
+        self.record_path.write_text(json.dumps({**self.record, "upstream_commit": revision}))
+        self.revision.side_effect = self.verify_revision
+        with mock.patch.object(serve_policy.runtime.subprocess, "check_output", side_effect=[revision, ""]), \
+             mock.patch.object(serve_policy.runtime.subprocess, "run") as ancestry:
+            self.invoke()
+        ancestry.assert_not_called()
+        self.create_policy.assert_called_once_with(self.config, self.checkpoint)
+
+    def test_q5_still_rejects_unknown_or_dirty_runtime(self):
+        self.fixture()
+        self.revision.side_effect = self.verify_revision
+        for outputs, message in [(["unknown"], "Expected OpenPI"),
+                                 ([sorted(serve_policy.runtime.SUPPORTED_LOCAL_COMMITS)[0],
+                                   "src/openpi/policies/policy.py"], "Unreviewed changes")]:
+            with self.subTest(outputs=outputs), \
+                 mock.patch.object(serve_policy.runtime.subprocess, "check_output", side_effect=outputs), \
+                 self.assertRaisesRegex(ValueError, message):
+                self.invoke()
+            self.environment.assert_not_called()
+            self.create_policy.assert_not_called()
+
+    def test_libero_still_requires_reviewed_runtime_ancestry(self):
+        self.fixture("libero")
+        self.revision.side_effect = self.verify_revision
+        revision = sorted(serve_policy.runtime.SUPPORTED_LOCAL_COMMITS)[0]
+        with mock.patch.object(serve_policy.runtime.subprocess, "check_output", return_value=revision), \
+             mock.patch.object(serve_policy.runtime.subprocess, "run",
+                               side_effect=subprocess.CalledProcessError(1, "git merge-base")) as ancestry, \
+             self.assertRaises(subprocess.CalledProcessError):
+            self.invoke(robot="libero")
+        ancestry.assert_called_once()
+        self.environment.assert_not_called()
+        self.create_policy.assert_not_called()
 
     def test_wrong_robot_reports_missing_record_before_any_model_load(self):
         self.fixture()
