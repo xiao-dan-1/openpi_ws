@@ -185,6 +185,38 @@ nohup .venv/bin/python -B -u -m pipeline.q5.train \
 评估结果记录核验方式及两份清单的哈希，不改写清单、实验配置或归一化统计。
 不传此参数仍要求清单文件哈希完全一致。
 
+## Q5 策略服务
+
+公共服务入口显式选择 Q5 配置，使用该实验的模型规格和检查点自带的归一化统计：
+
+```bash
+./.venv/bin/python -B -u -m pipeline.inference.serve_policy \
+  --robot q5 --gpu 0 \
+  --exp-name q5_v2_fsdp1_b16_w2_finetune_01 --step 15999 --port 8000
+```
+
+本机需要 `runs/pi05_q5/<实验名>/config.json`、对应检查点和 tokenizer，
+不要求 LIBERO/Q5 数据集、数据划分清单或基础权重。服务不计算离线误差，
+所以无需 `--training-split-manifest`。显存预算默认 0.75，可用 `--memory-fraction` 调整。
+默认监听 `127.0.0.1`；从其他机器连接时显式指定 `--host 0.0.0.0`，并使用服务机地址连接。
+
+客户端使用官方 `openpi_client.websocket_client_policy.WebsocketClientPolicy`：
+请求包含 `state`（38 维）、`images.image_head`（RGB uint8 H×W×3）及 `prompt`（任务文本）；
+返回 `actions` 为 `(10, 38)` 的绝对关节目标，期望单位 rad、关节顺序见服务元数据 `joint_names`。
+服务启动及单次推理检查不代表真机执行已验收。
+
+服务保持运行，在另一个终端检查真实验证观测的推理：
+
+```bash
+./.venv/bin/python -B -u -m pipeline.inference.check_policy \
+  --robot q5 --exp-name q5_v2_fsdp1_b16_w2_finetune_01 \
+  --step 15999 --host 127.0.0.1 --port 8000
+```
+
+默认读取验证副本的 0、2、4 集，各取首/中/末帧，共九次请求；可用 `--episodes` 指定验证集编号。
+客户端检查图像/状态帧对应关系及服务身份、Q5 关节顺序和绝对动作语义，期望有限的 `(10, 38)` 输出。
+它不读取测试集观测、不比较示范误差，也不发送机器人控制指令。默认结果只打印终端，显式 `--output` 才保存。
+
 ## 验证边界
 
 本机已完成v2数据处理、CPU数据/元数据检查和单元测试。用户提供的服务器结果已验证单卡完整加载/前向/更新、单卡smoke保存恢复与验证预测，以及双卡benchmark。2026-10-29，双卡正式入口在物理卡1、2、全局batch16、fraction0.75下完成100→120步保存恢复，训练步数及Adam/调度计数器均按100→120接续；119检查点单卡验证推理通过，五条validation共100个起点，未读取test。右臂/右手窗口MAE分别为0.4032109/0.4762642rad；这是短跑离线误差，不能当作机器人闭环成功率。

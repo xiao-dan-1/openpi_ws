@@ -2,9 +2,12 @@
 import inspect
 import json
 import os
+from pathlib import Path
 import urllib.request
 
-from pipeline.common.config import WORKSPACE, UPSTREAM_COMMIT
+from pipeline.common.runtime import UPSTREAM_COMMIT
+
+WORKSPACE = Path(__file__).resolve().parents[2]
 
 
 def prepare_client(host):
@@ -33,13 +36,20 @@ def read_server_metadata(host, port):
         return msgpack_numpy.unpackb(connection.recv(timeout=10))
 
 
-def verify_server_metadata(metadata, experiment, step, *, workspace=None):
+def verify_server_metadata(metadata, experiment, step, *, workspace=None, robot="libero"):
+    if robot not in ("libero", "q5"):
+        raise ValueError(f"Unsupported robot: {robot}")
     root = WORKSPACE if workspace is None else workspace
-    original = json.loads((root / "runs/pi05_libero" / experiment / "config.json").read_text())
+    original = json.loads((root / "runs" / f"pi05_{robot}" / experiment / "config.json").read_text())
     identity = metadata.get("pipeline", {})
     expected = {"experiment": experiment, "checkpoint_step": step,
                 "upstream_commit": UPSTREAM_COMMIT, "model": original["model"],
                 "norm_stats_sha256": original["norm_stats_sha256"]}
     if identity != expected:
         raise ValueError("Connected policy server does not match the requested experiment/checkpoint/stats")
+    if robot == "q5":
+        from pipeline.q5.schema import JOINT_NAMES, ACTION_REPRESENTATION
+        if (metadata.get("robot_type") != "q5" or metadata.get("joint_names") != list(JOINT_NAMES)
+                or metadata.get("action_representation") != ACTION_REPRESENTATION):
+            raise ValueError("Connected Q5 policy has a different robot, joint order or action representation")
     return identity

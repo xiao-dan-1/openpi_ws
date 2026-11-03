@@ -35,6 +35,14 @@
 
 `data/` 只存处理代码；数据集、资产、检查点和运行产物仍放在工作区原目录。现有运行检查保留在 `checks/`，自动化回归测试位于工作区 `tests/`。
 
+`pipeline.inference.serve_policy` 通过 `--robot q5` 或 `--robot libero` 选择配置，
+共享官方策略加载和 WebSocket 服务；省略时默认 `libero`，兼容已有命令。
+服务使用训练记录及检查点自带统计，不要求本机保留训练数据集或基础权重。
+`--host` 默认 `127.0.0.1`，远程客户端连接时可显式指定 `--host 0.0.0.0`。
+`check_policy` 同样支持 `--robot q5/libero`；Q5 默认读取验证集 0、2、4 集的首/中/末帧，
+检查服务身份、关节顺序、绝对动作语义及 `(10, 38)` 有限输出。省略 `--robot` 保留 LIBERO 行为。
+`local_docker_serve` 的历史适配目前仍专用于 LIBERO。
+
 旧的 `python pipeline/train.py …` 等调用已迁移；入口对照、回归测试方法和 WSL 当前 Compose 的说明见 [REFACTOR.md](docs/REFACTOR.md)。文档中的历史训练结果仍以原验证记录为准，本次重构不更新模型效果结论。
 
 预期结构：
