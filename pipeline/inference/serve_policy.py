@@ -58,7 +58,11 @@ def main():
     runtime.verify_upstream_revision(WORKSPACE / "openpi", verify_ancestry=args.robot != "q5")
     runtime.prepare_environment(WORKSPACE, cpu=False, gpu=args.gpu)
     configure_memory_fraction(args.memory_fraction)
-    sys.path.insert(0, str(WORKSPACE / "openpi/src"))
+    # Resolve both upstream packages from this checkout, even after moving the workspace.
+    sys.path[:0] = [
+        str(WORKSPACE / "openpi/src"),
+        str(WORKSPACE / "openpi/packages/openpi-client/src"),
+    ]
     config, original, asset_id = experiment_config(args.robot, args.exp_name)
     runtime.require_tokenizer(WORKSPACE)
     checkpoint = config.checkpoint_dir / str(args.step)
