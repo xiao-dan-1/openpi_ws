@@ -1,10 +1,11 @@
 """Launch the pinned official JAX trainer with workspace-local LoRA config."""
 import argparse
-import logging
 import json
+import logging
 
-from pipeline.common.validation import experiment_name
 from pipeline.common.config import WORKSPACE, build_config, describe, load_official_script, prepare_environment, require_assets, write_manifest
+from pipeline.common.memory import add_memory_argument, memory_settings
+from pipeline.common.validation import experiment_name
 
 
 def main():
@@ -17,12 +18,13 @@ def main():
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--cache-dir")
+    add_memory_argument(parser)
     args = parser.parse_args()
     if args.batch_size < 1 or (args.steps is not None and args.steps < 1):
         parser.error("batch-size and steps must be positive")
     if args.num_workers < 0:
         parser.error("num-workers must be non-negative")
-    prepare_environment(cpu=False, gpu=args.gpu, cache_dir=args.cache_dir)
+    prepare_environment(cpu=False, gpu=args.gpu, cache_dir=args.cache_dir, memory_fraction=args.memory_fraction)
     import jax
     config = build_config(profile=args.profile, exp_name=args.exp_name,
                           batch_size=args.batch_size, steps=args.steps, resume=args.resume,
@@ -49,12 +51,15 @@ def main():
     if args.resume:
         original = json.loads((run_dir / "config.json").read_text())
         current = describe(config, args.profile)
-        for key in ["profile", "model", "learning_rate", "norm_stats_sha256", "local_dataset_alias"]:
+        for key in ["profile", "model", "learning_rate", "norm_stats_sha256", "local_dataset_alias", "batch_size"]:
             if original.get(key) != current.get(key):
                 raise ValueError(f"Resume configuration changed: {key}")
     run_dir.mkdir(parents=True, exist_ok=True)
-    write_manifest(config, args.profile, run_dir / ("resume_config.json" if args.resume else "config.json"))
+    allocator = memory_settings()
+    write_manifest(config, args.profile, run_dir / ("resume_config.json" if args.resume else "config.json"),
+                   allocator_settings=allocator)
     logging.basicConfig(level=logging.INFO)
+    logging.info("JAX allocator settings: %s", allocator)
     official = load_official_script("train")
     official.main(config)
 

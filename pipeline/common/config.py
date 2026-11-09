@@ -6,10 +6,10 @@ No upstream repository files are modified.
 import dataclasses
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from pipeline.common import runtime
+from pipeline.common.memory import DEFAULT_MEMORY_FRACTION, configure_memory_fraction
 from pipeline.common.runtime import UPSTREAM_COMMIT, SUPPORTED_LOCAL_COMMITS
 from pipeline.common.validation import gpu_selectors
 
@@ -23,7 +23,7 @@ def verify_upstream_revision():
         WORKSPACE / "openpi", protected_paths=(*runtime.RUNTIME_PATHS, "examples/libero/main.py"))
 
 
-def prepare_environment(*, cpu=True, gpu=None, cache_dir=None):
+def prepare_environment(*, cpu=True, gpu=None, cache_dir=None, memory_fraction=DEFAULT_MEMORY_FRACTION):
     if not (WORKSPACE / "datasets/libero/meta/info.json").is_file():
         raise FileNotFoundError("Expected workspace/datasets/libero/meta/info.json")
     verify_upstream_revision()
@@ -33,8 +33,7 @@ def prepare_environment(*, cpu=True, gpu=None, cache_dir=None):
             raise ValueError("--gpu must specify one allocated GPU index or GPU-UUID")
     runtime.prepare_environment(WORKSPACE, cpu=cpu, gpu=gpu, cache_dir=cache_dir)
     if not cpu:
-        os.environ.pop("XLA_CLIENT_MEM_FRACTION", None)
-        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.75"
+        configure_memory_fraction(memory_fraction)
 
 
 def build_config(*, profile="smoke", exp_name="smoke", batch_size=None, steps=None,
@@ -136,7 +135,10 @@ def describe(config, profile):
     }
 
 
-def write_manifest(config, profile, destination):
+def write_manifest(config, profile, destination, *, allocator_settings=None):
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(describe(config, profile), indent=2), encoding="utf-8")
+    manifest = describe(config, profile)
+    if allocator_settings is not None:
+        manifest["allocator_settings"] = allocator_settings
+    destination.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

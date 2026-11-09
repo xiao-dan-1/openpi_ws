@@ -2,6 +2,7 @@
 import contextlib
 import dataclasses
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -135,13 +136,16 @@ class TrainingResumeTest(RuntimeFixture):
             "jax": self.jax, "orbax": SimpleNamespace(checkpoint=self.orbax),
             "orbax.checkpoint": self.orbax,
         }))
-        self.patch(sys, "argv", new=["train", "--gpu", "0", "--exp-name", "demo", "--resume"])
+        self.patch(sys, "argv", new=["train", "--gpu", "0", "--exp-name", "demo", "--batch-size", "16", "--resume"])
         self.patch(train, "WORKSPACE", new=self.root)
-        self.patch(train, "prepare_environment")
+        dataset_info = self.root / "datasets/libero/meta/info.json"
+        dataset_info.parent.mkdir(parents=True)
+        dataset_info.touch()
+        self.stack.enter_context(patch.dict(os.environ, {"XLA_CLIENT_MEM_FRACTION": "0.8"}))
         self.patch(train, "require_assets")
         self.patch(train, "build_config", return_value=self.config)
         self.official = self.patch(train, "load_official_script")
-        self.write_manifest = self.patch(train, "write_manifest")
+        self.write_manifest = self.patch(train, "write_manifest", wraps=common_config.write_manifest)
         self.manifest.write_text(json.dumps(common_config.describe(self.config, "smoke")))
 
     def test_empty_or_zero_only_checkpoint_refuses_resume(self):
@@ -172,7 +176,25 @@ class TrainingResumeTest(RuntimeFixture):
             self.config.checkpoint_dir, options=self.orbax.CheckpointManagerOptions.return_value)
         self.manager.__exit__.assert_called_once()
         self.official.return_value.main.assert_called_once_with(self.config)
-        self.write_manifest.assert_called_once_with(self.config, "smoke", self.run_dir / "resume_config.json")
+        record = json.loads((self.run_dir / "resume_config.json").read_text())
+        self.assertEqual(record["allocator_settings"]["memory_fraction"], 0.75)
+
+    def test_explicit_fraction_is_applied_and_recorded(self):
+        self.manager.latest_step.return_value = 50
+        sys.argv.extend(["--memory-fraction", "0.98"])
+        train.main()
+        self.assertNotIn("XLA_CLIENT_MEM_FRACTION", os.environ)
+        self.assertEqual(os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"], "0.98")
+        record = json.loads((self.run_dir / "resume_config.json").read_text())
+        self.assertEqual(record["allocator_settings"]["memory_fraction"], 0.98)
+
+    def test_changed_batch_is_rejected_before_launching_trainer(self):
+        self.manager.latest_step.return_value = 50
+        self.config.batch_size = 1
+        with self.assertRaisesRegex(ValueError, "Resume configuration changed: batch_size"):
+            train.main()
+        self.official.assert_not_called()
+        self.write_manifest.assert_not_called()
 
 
 if __name__ == "__main__":

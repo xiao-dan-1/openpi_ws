@@ -26,21 +26,21 @@ batch 16 含数据加载吞吐约 3.04 个观测样本/秒，纯训练约 3.57 �
 | 保留规则 | 官方 max_to_keep=1，另保留满足 keep_period=5000 的检查点 |
 | 数据统计量 | 使用已验收的正式统计量，SHA256 7e19abf21b2f8837e1e27c468f4021efe359e38a9f6158acb83b6f978dad6b5a |
 
-现有 `pipeline.train.run` 支持所有这些设置，无需修改运行代码或重新安装环境。每条正式启动/恢复命令都显式传 --batch-size 16，避免当前命令行默认值 1 覆盖它。
+每条正式启动和恢复命令都显式传 `--batch-size 16`。恢复时入口会核对原实验的 batch 大小。显存池默认比例为 0.75，可通过 `--memory-fraction` 调整，实际配置记录在实验 JSON 中。下面的模板用 0.98 复现单张 RTX 4090 的 batch 16 单步测试设置，连续更新、保存和续训仍需在目标服务器验收。
 
 30000×16=480000 个训练中心观测样本，约为本数据集帧数的 1.76 倍。这与官方全参数 batch 256×30000 的样本预算不同，不能据此承诺官方成绩。
 
 ## 1. 启动正式训练第一段
 
-所有命令在 openpi_ws 根目录执行。GPU 0 仍空闲且可用时，沿用已测试的 UUID；如已分配其他卡，替换 --gpu。确保没有另一个同名训练实验正在运行。第一次使用新实验名，不加 --resume。
+所有命令在 openpi_ws 根目录执行。将 GPU_ID 替换为分配给你的空闲 GPU 编号或 UUID。第一次使用新实验名，不加 --resume。
 
 ~~~bash
 mkdir -p logs
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   .venv/bin/python -u -m pipeline.train.run \
-  --gpu GPU-cca35824-7a74-52fc-77f8-e9a254b966f6 \
+  --gpu GPU_ID \
   --exp-name libero_lora_01 --profile finetune \
-  --batch-size 16 --num-workers 2 --steps 1000 \
+  --batch-size 16 --num-workers 2 --memory-fraction 0.98 --steps 1000 \
   >> logs/libero_lora_01.log 2>&1 < /dev/null &
 ~~~
 
@@ -65,9 +65,9 @@ tail -n 60 -f logs/libero_lora_01.log
 ~~~bash
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   .venv/bin/python -u -m pipeline.train.run \
-  --gpu GPU-cca35824-7a74-52fc-77f8-e9a254b966f6 \
+  --gpu GPU_ID \
   --exp-name libero_lora_01 --profile finetune \
-  --batch-size 16 --num-workers 2 --steps 30000 --resume \
+  --batch-size 16 --num-workers 2 --memory-fraction 0.98 --steps 30000 --resume \
   >> logs/libero_lora_01_resume.log 2>&1 < /dev/null &
 ~~~
 

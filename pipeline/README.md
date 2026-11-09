@@ -97,6 +97,7 @@ bash scripts/download_tokenizer.sh
 | 状态输入/额外 delta 转换 | discrete_state_input=False / False | 相同 |
 | 参数更新 | 全参数微调 | 两个 Gemma 模块启用 LoRA，配套冻结规则 |
 | 训练批大小 | 256 | CLI 默认 1，正式命令显式使用 16；容量实测见对应记录 |
+| JAX 显存池比例 | README 示例为 0.9 | CLI 默认 0.75，可用 `--memory-fraction` 指定；实际设置写入实验记录 |
 | EMA | 0.999 | 关闭 |
 | 训练步数 | 30000 | 正式 30000，试跑 100 |
 | 学习率 | 峰值 5e-5，预热 10000，末值 5e-5 | 峰值 5e-5，末值 5e-6；试跑预热 10，正式预热 1000 |
@@ -200,14 +201,14 @@ nohup env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.train.run \
   --gpu GPU_ID --exp-name libero_smoke_01 --profile smoke --steps 120 --resume
 ~~~
 
---steps 指累计更新上限，不是额外增加的步数。恢复前会核对原实验记录中的模型、学习率、统计量等设置。
+--steps 指累计更新上限，不是额外增加的步数。恢复前会核对原实验记录中的模型、batch 大小、学习率和统计量等设置。
 
 恢复验收通过后，先按照 INFERENCE_EVAL.md 接通检查点策略服务与 LIBERO 评估。batch 与加载测试现已完成，正式首段选定 batch 16、num_workers 2、1000 次更新。详细计划见 FORMAL_TRAINING.md；当前尚未实现梯度累积：
 
 ~~~bash
 nohup env PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pipeline.train.run \
   --gpu GPU_ID --exp-name libero_lora_01 --profile finetune \
-  --batch-size 16 --num-workers 2 --steps 1000 \
+  --batch-size 16 --num-workers 2 --memory-fraction 0.98 --steps 1000 \
   >> logs/libero_lora_01.log 2>&1 < /dev/null &
 ~~~
 
