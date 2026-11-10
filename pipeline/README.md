@@ -82,6 +82,8 @@ HF_ENDPOINT=https://huggingface.co bash scripts/download_weights.sh
 
 下载中断后重跑同一脚本，复用之前命令或脚本下载的文件和 `.cache/huggingface` 缓存。脚本明确关闭 Xet 和 hf_transfer，使用 HTTP 续传；先获取固定版本的远端文件清单，下载后逐个检查文件是否存在、字节数是否匹配，再报告成功。清单查询失败、离线或文件不完整均非零退出，保留续传缓存；该检查不是全量内容哈希校验。这些脚本均支持 `--help`，默认仅在终端输出，不生成额外报告。
 
+下载官方 LIBERO 推理 checkpoint 时，运行 `bash scripts/download_weights.sh pi05_libero`。脚本通过 OpenPI 下载器从官方 GCS 下载到 `openpi_cache/openpi-assets/checkpoints/pi05_libero/`，并检查 Orbax 参数清单和归一化统计量文件是否存在。
+
 `download_tokenizer.sh` 独立下载官方 GCS 的 `paligemma_tokenizer.model` 到 `openpi_cache/big_vision/`，不依赖 Python 环境。它先校验已有文件，正确则直接复用；校验失败则报错并保留。新文件在临时路径下载，SHA-256 与管道固定值一致后才放入目标位置，失败时清理本次临时文件，且不覆盖已有目标。可用 `Q5_TOKENIZER_URL` 指定其他下载地址，SHA-256 校验仍强制执行：
 
 ```bash

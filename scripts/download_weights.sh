@@ -1,67 +1,96 @@
 #!/usr/bin/env bash
-# Download the JAX/Orbax pi05_base checkpoint used by this workspace.
+# Download JAX/Orbax weights used by this workspace.
 set -euo pipefail
-
-case "${1:-}" in
-  -h|--help)
-    cat <<'HELP'
-Usage: bash scripts/download_weights.sh
-Download pinned pi05_base JAX/Orbax parameters (~12.4 GB).
-Destination: <workspace>/openpi_cache/openpi-assets/checkpoints/pi05_base/params
-HF_ENDPOINT defaults to https://hf-mirror.com; override it to switch sites.
-Completed files and Hugging Face partial downloads are reused on reruns.
-Remote file names and sizes must be verified before reporting success.
-Tokenizer: bash scripts/download_tokenizer.sh. Datasets are prepared separately.
-HELP
-    exit 0 ;;
-esac
-if (( $# != 0 )); then
-  echo "Unexpected arguments. Use --help for usage." >&2
-  exit 2
-fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 workspace_root="$(cd -- "$script_dir/.." && pwd)"
-python_bin="$workspace_root/.venv/bin/python"
+venv_python="$workspace_root/.venv/bin/python"
+python_bin="$venv_python"
 if [[ ! -x "$python_bin" ]]; then
-  echo "Training environment is missing. Run: bash scripts/setup_env.sh" >&2
-  exit 1
+  # A system Python can show help before the environment is installed.
+  python_bin="$(command -v python3)" || {
+    echo "OpenPI environment is missing. Run: bash scripts/setup_env.sh" >&2
+    exit 1
+  }
 fi
-export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
-# Use HTTP resume; hf_transfer can discard existing .incomplete files.
-export HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=0
-export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"
-export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
-echo "Weight download endpoint: $HF_ENDPOINT"
-"$python_bin" -B - "$workspace_root" <<'PY'
+
+"$python_bin" -B - "$workspace_root" "$venv_python" "$@" <<'PY'
+import argparse
 import os
 import sys
 from pathlib import Path
 
-from huggingface_hub import HfApi, snapshot_download
+BASE_MODEL = "pi05_base"
+BASE_REPO = "robotgeneralist/openpi_checkpoint_mirrors2"
+BASE_REVISION = "1fda6b04e83d625eb1a55d68db32050e248cac2b"
+HF_MIRROR = "https://hf-mirror.com"
+LIBERO_MODEL = "pi05_libero"
+LIBERO_URL = f"gs://openpi-assets/checkpoints/{LIBERO_MODEL}"
 
-repo_id = "robotgeneralist/openpi_checkpoint_mirrors2"
-revision = "1fda6b04e83d625eb1a55d68db32050e248cac2b"
-prefix = "pi05_base/params"
-destination = Path(sys.argv[1]) / "openpi_cache/openpi-assets/checkpoints"
-# Fetch the manifest first: snapshot_download alone can silently reuse a partial
-# local directory when the Hub is unreachable. A failed lookup must fail here.
-info = HfApi().model_info(
-    repo_id, revision=revision, files_metadata=True,
-    timeout=int(os.environ["HF_HUB_ETAG_TIMEOUT"]),
+
+def download_base(cache_root):
+    os.environ["HF_ENDPOINT"] = os.environ.get("HF_ENDPOINT") or HF_MIRROR
+    # Use HTTP resume; hf_transfer can discard existing .incomplete files.
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+    os.environ["HF_HUB_ETAG_TIMEOUT"] = os.environ.get("HF_HUB_ETAG_TIMEOUT") or "30"
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT") or "60"
+
+    from huggingface_hub import HfApi, snapshot_download
+
+    print(f"Weight download endpoint: {os.environ['HF_ENDPOINT']}", flush=True)
+    prefix = f"{BASE_MODEL}/params/"
+    destination = cache_root / "openpi-assets/checkpoints"
+    # Fetch the manifest first: snapshot_download can silently reuse a partial
+    # local directory when the Hub is unreachable.
+    info = HfApi().model_info(
+        BASE_REPO, revision=BASE_REVISION, files_metadata=True,
+        timeout=int(os.environ["HF_HUB_ETAG_TIMEOUT"]),
+    )
+    files = [entry for entry in info.siblings if entry.rfilename.startswith(prefix)]
+    if not files:
+        sys.exit(f"No checkpoint files found at {BASE_REPO}@{BASE_REVISION}/{prefix}")
+    snapshot_download(
+        repo_id=BASE_REPO,
+        revision=BASE_REVISION,
+        allow_patterns=[f"{prefix}*"],
+        local_dir=destination,
+    )
+    for entry in files:
+        path = destination / entry.rfilename
+        if not path.is_file() or path.stat().st_size != entry.size:
+            sys.exit(f"Incomplete checkpoint: {path} (expected {entry.size} bytes). Rerun to resume.")
+    print(f"Weights ready: {destination / prefix} ({len(files)} files; names and sizes verified)")
+
+
+def download_libero(cache_root):
+    from openpi.shared import download
+
+    os.environ["OPENPI_DATA_HOME"] = str(cache_root)
+    checkpoint = download.maybe_download(LIBERO_URL, token="anon")
+    for relative in ("params/manifest.ocdbt", "assets/physical-intelligence/libero/norm_stats.json"):
+        path = checkpoint / relative
+        if not path.is_file():
+            sys.exit(f"Incomplete checkpoint: missing {path}. Move {checkpoint} aside and rerun.")
+    print(f"Weights ready: {checkpoint}")
+
+
+parser = argparse.ArgumentParser(
+    prog="bash scripts/download_weights.sh",
+    description="Download JAX/Orbax weights into the workspace's openpi_cache.",
+    epilog=f"HF_ENDPOINT overrides the default base-weight mirror ({HF_MIRROR}).",
 )
-files = [entry for entry in info.siblings if entry.rfilename.startswith(f"{prefix}/")]
-if not files:
-    sys.exit(f"No checkpoint files found at {repo_id}@{revision}/{prefix}")
-snapshot_download(
-    repo_id=repo_id,
-    revision=revision,
-    allow_patterns=[f"{prefix}/*"],
-    local_dir=destination,
+parser.add_argument(
+    "model", nargs="?", choices=(BASE_MODEL, LIBERO_MODEL), default=BASE_MODEL,
+    help="checkpoint to download (default: %(default)s)",
 )
-for entry in files:
-    path = destination / entry.rfilename
-    if not path.is_file() or path.stat().st_size != entry.size:
-        sys.exit(f"Incomplete checkpoint: {path} (expected {entry.size} bytes). Rerun to resume.")
-print(f"Weights ready: {destination / prefix} ({len(files)} files; names and sizes verified)")
+args = parser.parse_args(sys.argv[3:])
+if not os.access(sys.argv[2], os.X_OK):
+    sys.exit("OpenPI environment is missing. Run: bash scripts/setup_env.sh")
+
+cache_root = Path(sys.argv[1]) / "openpi_cache"
+if args.model == BASE_MODEL:
+    download_base(cache_root)
+else:
+    download_libero(cache_root)
 PY
