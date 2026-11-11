@@ -27,7 +27,6 @@ pipeline/
     check_config.py
   ops/
     README.md
-    setup_libero_env.sh
     libero_build_constraints.txt
   docs/
     FORMAL_TRAINING.md
@@ -58,7 +57,7 @@ Python 子目录均包含 `__init__.py`，包初始化不加载模型或仿真�
 | `pipeline/check_simulation.py` | `python -m pipeline.eval.check_simulation` |
 | `pipeline/compute_norm_stats.py` | `python -m pipeline.data.compute_norm_stats` |
 | `pipeline/check_config.py` | `python -m pipeline.data.check_config` |
-| `bash pipeline/setup_libero_env.sh` | `bash pipeline/ops/setup_libero_env.sh` |
+| `bash pipeline/setup_libero_env.sh`、`bash pipeline/ops/setup_libero_env.sh` | `bash scripts/setup_libero_env.sh` |
 
 `policy_rpc.py` 和 `config.py` 是公共模块，分别通过 `pipeline.inference.policy_rpc` 和 `pipeline.common.config` 导入。旧入口没有兼容包装层，部署时替换完整 `pipeline/` 并删除旧的同名平铺脚本，避免混用。服务器上的调度脚本也需按表更新；本次只更新当前 Windows 工作区与本机 WSL。
 

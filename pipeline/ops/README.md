@@ -55,7 +55,7 @@ Python 模块保留 `-m 模块名`，Xorg 简写为 `Xorg`；未知启动器、`
 
 ## 环境安装与当前部署
 
-独立 LIBERO 环境安装入口：在工作区根目录执行 `bash pipeline/ops/setup_libero_env.sh`。`--help` 只显示说明；不传该参数会按原流程安装 Python 和依赖。构建约束与安装脚本放在同一目录，工作区从脚本上两级解析。
+独立 LIBERO 环境安装入口：在工作区根目录执行 `bash scripts/setup_libero_env.sh`。`--help` 只显示说明；不传该参数会按原流程安装 Python 和依赖。构建约束保存在本目录的 `libero_build_constraints.txt`。脚本从自身所在的 `scripts/` 上一级定位工作区。
 
 当前 WSL 日常部署仍使用：
 

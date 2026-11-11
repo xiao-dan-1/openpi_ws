@@ -9,7 +9,7 @@
 | 正式配置输入 | 两个真实 CPU 批次通过 | pipeline/data/check_config.py |
 | LoRA 训练与保存 | 100 次更新，loss/梯度有限，检查点保存完成 | pipeline/train/run.py；logs/libero_smoke_01.log |
 | 恢复训练 | 恢复 99，继续更新并保存 119 | logs/libero_smoke_01_resume120.log；checkpoints/pi05_libero/libero_smoke_01/119/ |
-| 仿真依赖与渲染 | Python 3.8.20，125 个包兼容；OSMesa 单场景检查通过 | pipeline/ops/setup_libero_env.sh；pipeline/eval/check_simulation.py |
+| 仿真依赖与渲染 | Python 3.8.20，125 个包兼容；OSMesa 单场景检查通过 | scripts/setup_libero_env.sh；pipeline/eval/check_simulation.py |
 | 检查点服务 | LoRA 参数及检查点统计量加载通过 | pipeline/inference/serve_policy.py；logs/serve_libero_smoke_01_119.log |
 | 真实观测推理 | 九个观测通过，动作均为有限值 (10,7) | pipeline/inference/check_policy.py；runs/pi05_libero/libero_smoke_01/inference_probe_119.json |
 | 闭环仿真 | spatial 十个任务各一次，完整执行，无运行异常 | pipeline/eval/eval_libero.py；下列评估目录 |

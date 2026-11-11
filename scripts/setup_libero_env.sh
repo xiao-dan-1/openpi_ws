@@ -2,15 +2,15 @@
 # Uses the official pinned LIBERO dependency lists in an independent Python 3.8 environment.
 set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
-  echo "Usage: bash pipeline/ops/setup_libero_env.sh"
+  echo "Usage: bash scripts/setup_libero_env.sh"
   echo "Creates tools/libero-env using Python 3.8; does not modify .venv."
   echo "LIBERO_NETWORK_MODE=direct|inherit (default direct): package download route."
   echo "LIBERO_PYTHON_NETWORK_MODE=direct|inherit: optional independent Python download route."
   echo "UV_DEFAULT_INDEX: optional verified PyPI mirror; PyTorch cu113 still uses its official extra index."
   exit 0
 fi
-ops_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-workspace_root="$(cd -- "$ops_dir/../.." && pwd)"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+workspace_root="$(cd -- "$script_dir/.." && pwd)"
 actual_commit="$(git -C "$workspace_root/openpi" rev-parse HEAD)"
 case "$actual_commit" in
   215abfb217dbac7d5f1273282331b9b1866c0479) ;;
@@ -23,7 +23,7 @@ uv_bin="$workspace_root/tools/bin/uv"
 if [[ ! -x "$uv_bin" ]]; then uv_bin="$(command -v uv)"; fi
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$workspace_root/tools/python}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$workspace_root/.cache/uv}"
-export UV_BUILD_CONSTRAINT="$ops_dir/libero_build_constraints.txt"
+export UV_BUILD_CONSTRAINT="$workspace_root/pipeline/ops/libero_build_constraints.txt"
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
 export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-4}"
 export GIT_LFS_SKIP_SMUDGE=1

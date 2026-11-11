@@ -18,7 +18,7 @@
 | `inference.serve_policy` | 通用入口真实加载同一模型；本地内存适配启动，再发送 episode 0 的 3 个观测 | PASS；适配方式与清单来源见下文 |
 | `eval.check_simulation` | 真实场景加载、reset、初始状态、10 个稳定动作、两路相机与机器人状态 | PASS；相机 `(256, 256, 3)`，状态 `(8,)` |
 | `eval.eval_libero` | `libero_spatial`，10 个任务，每任务 1 次，seed 7，CPU OSMesa 渲染 | 完成 10/10；成功 9/10；运行错误 0；视频 10 段 |
-| `ops/setup_libero_env.sh` | Bash 语法、`--help` 与路径检查 | 通过；复用已有镜像，没有重新安装依赖 |
+| `scripts/setup_libero_env.sh` | Bash 语法、`--help` 与路径检查 | 通过；复用已有镜像，没有重新安装依赖 |
 
 评估阶段耗时约 195 秒，不含检查点加载及前置真实观测推理。`9/10` 是单次流程检查的结果，不能代表稳定成功率或完整基准成绩。
 

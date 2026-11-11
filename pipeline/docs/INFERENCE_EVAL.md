@@ -10,7 +10,7 @@
 | inference/policy_rpc.py | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
 | inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
 | eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | tools/libero-env，CPU OSMesa |
-| ops/setup_libero_env.sh | 按固定仓库中的官方依赖表安装独立仿真环境 | tools/libero-env，Python 3.8 |
+| scripts/setup_libero_env.sh | 按固定仓库中的官方依赖表安装独立仿真环境 | tools/libero-env，Python 3.8 |
 | eval/eval_libero.py | 调用官方仿真评估入口，可选保存视频和结构化结果 | tools/libero-env；默认 CPU OSMesa 渲染 |
 
 将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务会使用所选检查点的 assets/libero/norm_stats.json，并核对其 SHA256 与原训练记录一致。不会用官方完整模型配置替代当前 LoRA 结构。
@@ -69,7 +69,7 @@ sudo apt-get install -y build-essential libosmesa6 libegl1 libgl1 libglib2.0-0
 安装 Python 依赖：
 
 ~~~bash
-nohup bash pipeline/ops/setup_libero_env.sh \
+nohup bash scripts/setup_libero_env.sh \
   >> logs/install_libero_env.log 2>&1 < /dev/null &
 ~~~
 
