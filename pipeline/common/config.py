@@ -23,8 +23,9 @@ def verify_upstream_revision():
         WORKSPACE / "openpi", protected_paths=(*runtime.RUNTIME_PATHS, "examples/libero/main.py"))
 
 
-def prepare_environment(*, cpu=True, gpu=None, cache_dir=None, memory_fraction=DEFAULT_MEMORY_FRACTION):
-    if not (WORKSPACE / "datasets/libero/meta/info.json").is_file():
+def prepare_environment(*, cpu=True, gpu=None, cache_dir=None, memory_fraction=DEFAULT_MEMORY_FRACTION,
+                        require_dataset=True):
+    if require_dataset and not (WORKSPACE / "datasets/libero/meta/info.json").is_file():
         raise FileNotFoundError("Expected workspace/datasets/libero/meta/info.json")
     verify_upstream_revision()
     if not cpu:

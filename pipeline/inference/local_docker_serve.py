@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--port", type=int, default=8100)
+    parser.add_argument("--host", default="127.0.0.1", help="Address to listen on")
     parser.add_argument("--exp-name", type=experiment_name, default="libero_lora_01")
     parser.add_argument("--step", type=int, default=999)
     parser.add_argument("--output", type=Path, help="Optionally save the service record; otherwise print it only")
@@ -26,7 +27,7 @@ def main():
     args = parser.parse_args()
     if args.step < 0 or not 0 < args.memory_fraction < 1 or args.restore_concurrent_gb < 1 or args.file_io_concurrency < 1 or not 1 <= args.port <= 65535:
         parser.error("Invalid GPU memory fraction, restore limit, or port")
-    prepare_environment(cpu=False, gpu=args.gpu)
+    prepare_environment(cpu=False, gpu=args.gpu, require_dataset=False)
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(args.memory_fraction)
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
     logging.basicConfig(level=logging.INFO, force=True)
@@ -84,8 +85,8 @@ def main():
     emit_report({"metadata": info, "memory_fraction": args.memory_fraction,
                  "restore_concurrent_gb": args.restore_concurrent_gb,
                  "file_io_concurrency": args.file_io_concurrency}, args.output)
-    logging.info("Local checkpoint loaded; serving on 127.0.0.1:%s", args.port)
-    WebsocketPolicyServer(policy, host="127.0.0.1", port=args.port, metadata=info).serve_forever()
+    logging.info("Local checkpoint loaded; serving on %s:%s", args.host, args.port)
+    WebsocketPolicyServer(policy, host=args.host, port=args.port, metadata=info).serve_forever()
 
 
 if __name__ == "__main__":
