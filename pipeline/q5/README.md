@@ -191,14 +191,14 @@ nohup .venv/bin/python -B -u -m pipeline.q5.train \
 
 ```bash
 ./.venv/bin/python -B -u -m pipeline.inference.serve_policy \
-  --robot q5 --gpu 0 \
-  --exp-name q5_v2_fsdp1_b16_w2_finetune_01 --step 15999 --port 8000
+  --gpu 0 --policy.config pi05_q5 \
+  --policy.dir checkpoints/pi05_q5/q5_v2_fsdp1_b16_w2_finetune_01/15999 --port 8000
 ```
 
-本机需要 `runs/pi05_q5/<实验名>/config.json`、对应检查点和 tokenizer，
-不要求 LIBERO/Q5 数据集、数据划分清单或基础权重。服务不计算离线误差，
+本机需要对应检查点目录和 tokenizer，不要求 LIBERO/Q5 数据集、数据划分清单或基础权重；
+若同时存在 `runs/pi05_q5/<实验名>/config.json`，启动时会核验训练记录一致并写入服务身份元数据。服务不计算离线误差，
 所以无需 `--training-split-manifest`。显存预算默认 0.75，可用 `--memory-fraction` 调整。
-默认监听 `127.0.0.1`；从其他机器连接时显式指定 `--host 0.0.0.0`，并使用服务机地址连接。
+默认监听 `0.0.0.0`；如需仅限本机访问，可显式指定 `--host 127.0.0.1`。
 
 客户端使用官方 `openpi_client.websocket_client_policy.WebsocketClientPolicy`：
 请求包含 `state`（38 维）、`images.image_head`（RGB uint8 H×W×3）及 `prompt`（任务文本）；

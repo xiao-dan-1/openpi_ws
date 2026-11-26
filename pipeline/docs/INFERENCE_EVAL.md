@@ -24,7 +24,8 @@ cd /mnt/sda/xd/openpi_ws
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   .venv/bin/python -u -m pipeline.inference.serve_policy \
   --gpu GPU-93947930-8f97-38bc-fcea-0b9d168bc871 \
-  --exp-name libero_smoke_01 --step 119 --port 8000 \
+  --policy.config pi05_libero \
+  --policy.dir checkpoints/pi05_libero/libero_smoke_01/119 --port 8000 \
   >> logs/serve_libero_smoke_01_119.log 2>&1 < /dev/null &
 ~~~
 

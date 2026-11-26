@@ -35,10 +35,11 @@
 
 `data/` 只存处理代码；数据集、资产、检查点和运行产物仍放在工作区原目录。现有运行检查保留在 `checks/`，自动化回归测试位于工作区 `tests/`。
 
-`pipeline.inference.serve_policy` 通过 `--robot q5` 或 `--robot libero` 选择配置，
-共享官方策略加载和 WebSocket 服务；省略时默认 `libero`，兼容已有命令。
-服务使用训练记录及检查点自带统计，不要求本机保留训练数据集或基础权重。
-`--host` 默认 `127.0.0.1`，远程客户端连接时可显式指定 `--host 0.0.0.0`。
+`pipeline.inference.serve_policy` 对齐上游 `serve_policy.py` 的权重选择方式，统一通过
+`--policy.config <pi05_libero|pi05_q5>` 与 `--policy.dir <权重目录>` 指定配置和检查点路径。
+服务共享官方策略加载和 WebSocket 服务，使用检查点自带统计，不要求本机保留训练数据集或基础权重；
+若工作区 `runs/<config>/<exp_name>/config.json` 存在，会同步校验训练记录并填充客户端身份元数据。
+`--host` 默认 `0.0.0.0`（如需仅限本机监听，可显式指定 `--host 127.0.0.1`）。
 `check_policy` 同样支持 `--robot q5/libero`；Q5 默认读取验证集 0、2、4 集的首/中/末帧，
 检查服务身份、关节顺序、绝对动作语义及 `(10, 38)` 有限输出。省略 `--robot` 保留 LIBERO 行为。
 `local_docker_serve` 的历史适配目前仍专用于 LIBERO。

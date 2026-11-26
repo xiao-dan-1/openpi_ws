@@ -68,7 +68,7 @@ class PipelineEntrypointsTest(unittest.TestCase):
             ("pipeline.q5.check_model", ["--gpu", "0", "--updates", "1"]),
             ("pipeline.q5.benchmark_fsdp", ["--gpus", "0", "--fsdp-devices", "1", "--num-workers", "-1"]),
             ("pipeline.q5.benchmark_fsdp", ["--gpus", "0", "--fsdp-devices", "1", "--timing-mode", "unknown"]),
-            ("pipeline.inference.serve_policy", ["--gpu", "0", "--exp-name", "demo", "--step", "-1"]),
+            ("pipeline.inference.serve_policy", ["--gpu", "0", "--policy.config", "unknown", "--policy.dir", "checkpoints/demo"]),
             ("pipeline.inference.local_docker_serve", ["--memory-fraction", "1"]),
             ("pipeline.eval.eval_libero", ["--exp-name", "demo", "--step", "1", "--trials", "0"]),
             ("pipeline.data.compute_norm_stats", ["--batch-size", "0"]),
