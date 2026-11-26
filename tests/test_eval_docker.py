@@ -1,4 +1,4 @@
-"""Unit tests for Docker-based LIBERO simulation and evaluation entrypoints."""
+"""Unit tests for local and Docker LIBERO simulation entrypoints."""
 import contextlib
 import io
 import json
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from pipeline.eval import check_simulation, docker_runtime, eval_libero
+from pipeline.eval import check_simulation, docker_runtime, eval_libero, runtime
 
 
 class DockerRuntimeTests(unittest.TestCase):
@@ -72,9 +72,10 @@ class DockerRuntimeTests(unittest.TestCase):
 
 
 class EvalEntrypointTests(unittest.TestCase):
-    def test_host_eval_libero_dispatches_to_docker_without_exp_name_or_step(self):
+    def test_docker_eval_libero_dispatches_without_exp_name_or_step(self):
         argv = [
             "eval_libero",
+            "--docker",
             "--host", "10.110.230.112",
             "--port", "28126",
             "--suite", "libero_spatial",
@@ -82,8 +83,8 @@ class EvalEntrypointTests(unittest.TestCase):
             "--trials", "1",
         ]
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(eval_libero, "in_container", return_value=False), \
-             mock.patch.object(eval_libero, "run_in_docker", return_value=0) as runner:
+             mock.patch.object(runtime, "in_container", return_value=False), \
+             mock.patch.object(runtime, "run_in_docker", return_value=0) as runner:
             eval_libero.main()
         runner.assert_called_once()
         kwargs = runner.call_args.kwargs
@@ -94,25 +95,43 @@ class EvalEntrypointTests(unittest.TestCase):
         self.assertIn("--task-id", kwargs["inner_args"])
         self.assertIn("0", kwargs["inner_args"])
 
-    def test_host_check_simulation_dispatches_to_docker(self):
-        with mock.patch.object(sys, "argv", ["check_simulation", "--render-backend", "osmesa"]), \
-             mock.patch.object(check_simulation, "in_container", return_value=False), \
-             mock.patch.object(check_simulation, "run_in_docker", return_value=0) as runner:
+    def test_check_simulation_selects_docker_for_explicit_image(self):
+        argv = ["check_simulation", "--image", "libero:custom", "--render-backend", "osmesa"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(runtime, "in_container", return_value=False), \
+             mock.patch.object(runtime, "run_in_docker", return_value=0) as runner:
             check_simulation.main()
         runner.assert_called_once()
         kwargs = runner.call_args.kwargs
         self.assertEqual(kwargs["module"], "pipeline.eval.check_simulation")
+        self.assertEqual(kwargs["image"], "libero:custom")
         self.assertEqual(kwargs["render_backend"], "osmesa")
+
+    def test_check_simulation_uses_local_osmesa_by_default(self):
+        class LocalSimulationStarted(Exception):
+            pass
+
+        with mock.patch.object(sys, "argv", ["check_simulation"]), \
+             mock.patch.object(runtime, "in_container", return_value=False), \
+             mock.patch.object(runtime, "run_in_docker") as docker, \
+             mock.patch.object(runtime, "_ensure_local_runtime") as local, \
+             mock.patch.object(check_simulation, "prepare_simulation", side_effect=LocalSimulationStarted) as prepare, \
+             self.assertRaises(LocalSimulationStarted):
+            check_simulation.main()
+        docker.assert_not_called()
+        self.assertEqual(local.call_args.args[1:],
+                         ("pipeline.eval.check_simulation", check_simulation.WORKSPACE, "osmesa"))
+        prepare.assert_called_once_with("osmesa")
 
     def test_legacy_exp_name_and_step_rejected(self):
         for bad in [["--exp-name", "demo", "--step", "119"], ["--port", "0"], ["--trials", "0"], ["--task-id", "-1"]]:
             with self.subTest(bad=bad), \
                  mock.patch.object(sys, "argv", ["eval_libero", *bad]), \
-                 mock.patch.object(eval_libero, "run_in_docker") as runner, \
+                 mock.patch.object(eval_libero, "dispatch_simulation") as dispatch, \
                  contextlib.redirect_stderr(io.StringIO()), \
                  self.assertRaises(SystemExit):
                 eval_libero.main()
-            runner.assert_not_called()
+            dispatch.assert_not_called()
 
     def test_in_container_single_task_eval_records_server_metadata_without_runs_dir(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -141,12 +160,14 @@ class EvalEntrypointTests(unittest.TestCase):
             with mock.patch.object(sys, "argv", argv), \
                  contextlib.redirect_stdout(console), \
                  mock.patch.object(eval_libero, "WORKSPACE", root), \
-                 mock.patch.object(eval_libero, "in_container", return_value=True), \
+                 mock.patch.object(runtime, "in_container", return_value=True), \
+                 mock.patch.object(runtime, "_ensure_local_runtime") as local, \
                  mock.patch.object(eval_libero, "prepare_simulation"), \
                  mock.patch.object(eval_libero, "read_server_metadata", return_value=server_meta), \
                  mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
                  mock.patch("importlib.util.module_from_spec", return_value=official):
                 eval_libero.main()
+            local.assert_not_called()
             report = json.loads(console.getvalue())
             self.assertEqual(report["status"], "PASS")
             self.assertEqual(report["host"], "10.110.230.112")
@@ -165,14 +186,37 @@ class EvalEntrypointTests(unittest.TestCase):
                 (libero_base / sub).mkdir(parents=True)
             with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0"}, clear=False), \
                  mock.patch.object(eval_libero, "WORKSPACE", root), \
-                 mock.patch.object(sys, "version_info", (3, 8, 20)):
+                 mock.patch.object(sys, "version_info", (3, 8, 20)), \
+                 mock.patch.object(sys, "path", sys.path.copy()):
                 eval_libero.prepare_simulation("egl")
                 self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "0")
                 self.assertEqual(os.environ["MUJOCO_GL"], "egl")
-                cfg = json.loads((Path(os.environ["LIBERO_CONFIG_PATH"]) / "config.yaml").read_text())
-                self.assertEqual(cfg["benchmark_root"], str(libero_base))
+                config = Path(os.environ["LIBERO_CONFIG_PATH"]) / "config.yaml"
+                self.assertEqual(json.loads(config.read_text())["benchmark_root"], str(libero_base))
                 eval_libero.prepare_simulation("osmesa")
                 self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "")
+
+    def test_local_launcher_uses_workspace_python_and_osmesa_library(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            python = workspace / "tools/libero-env/bin/python"
+            python.parent.mkdir(parents=True)
+            python.touch(mode=0o755)
+            library_dir = workspace / "tools/osmesa/usr/lib/x86_64-linux-gnu"
+            library_dir.mkdir(parents=True)
+            (library_dir / "libOSMesa.so.8").touch()
+            module = "pipeline.eval.eval_libero"
+            argv = ["eval_libero", "--host", "127.0.0.1", "--task-id", "3"]
+            with mock.patch.object(sys, "argv", argv), \
+                 mock.patch.object(sys, "version_info", (3, 11, 0)), \
+                 mock.patch.object(runtime.sysconfig, "get_config_var", return_value="x86_64-linux-gnu"), \
+                 mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": "/custom/lib"}), \
+                 mock.patch.object(os, "execve") as exec_python:
+                runtime._ensure_local_runtime(None, module, workspace, "osmesa")
+            executable, command, env = exec_python.call_args.args
+            self.assertEqual(executable, python)
+            self.assertEqual(command, [str(python), "-B", "-u", "-m", module, *argv[1:]])
+            self.assertEqual(env["LD_LIBRARY_PATH"].split(os.pathsep), ["/custom/lib", str(library_dir)])
 
 
 if __name__ == "__main__":

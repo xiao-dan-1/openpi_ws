@@ -157,7 +157,7 @@ class ValidationReportTests(unittest.TestCase):
 
 class SimulationReportTests(unittest.TestCase):
     def test_camera_images_and_report_are_saved_only_with_output_directory(self):
-        from pipeline.eval import check_simulation
+        from pipeline.eval import check_simulation, runtime
         for save in [False, True]:
             with self.subTest(save=save), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -177,7 +177,8 @@ class SimulationReportTests(unittest.TestCase):
                 console = io.StringIO()
                 with mock.patch.object(sys, "argv", argv), mock.patch.dict(sys.modules), \
                      contextlib.redirect_stdout(console), mock.patch.object(check_simulation, "WORKSPACE", root), \
-                     mock.patch.object(check_simulation, "in_container", return_value=True), \
+                     mock.patch.object(runtime, "in_container", return_value=False), \
+                     mock.patch.object(runtime, "_ensure_local_runtime"), \
                      mock.patch.object(check_simulation, "prepare_simulation"), \
                      mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
                      mock.patch("importlib.util.module_from_spec", return_value=official):
@@ -195,7 +196,7 @@ class SimulationReportTests(unittest.TestCase):
 
 class EvaluationArtifactTests(unittest.TestCase):
     def test_official_video_artifacts_are_temporary_unless_requested(self):
-        from pipeline.eval import eval_libero
+        from pipeline.eval import eval_libero, runtime
         for save in [False, True]:
             with self.subTest(save=save), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -218,7 +219,8 @@ class EvaluationArtifactTests(unittest.TestCase):
                 console = io.StringIO()
                 with mock.patch.object(sys, "argv", argv), mock.patch.dict(sys.modules), \
                      contextlib.redirect_stdout(console), \
-                     mock.patch.object(eval_libero, "in_container", return_value=True), \
+                     mock.patch.object(runtime, "in_container", return_value=False), \
+                     mock.patch.object(runtime, "_ensure_local_runtime"), \
                      mock.patch.object(eval_libero, "prepare_simulation"), \
                      mock.patch.object(eval_libero, "read_server_metadata", return_value={"fixture": True}), \
                      mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
@@ -227,6 +229,7 @@ class EvaluationArtifactTests(unittest.TestCase):
                 report = json.loads(console.getvalue())
                 self.assertEqual(report["status"], "PASS")
                 self.assertEqual(report["episodes_completed"], 10)
+                self.assertEqual(report["render_backend"], "osmesa")
                 if save:
                     self.assertEqual(json.loads((output / "result.json").read_text()), report)
                     self.assertTrue((output / "videos/fixture.mp4").exists())

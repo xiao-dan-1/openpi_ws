@@ -1,4 +1,4 @@
-"""Check one real LIBERO scene, 10 stabilization steps, cameras and robot state via Docker."""
+"""Check one real LIBERO scene, 10 stabilization steps, cameras and robot state."""
 import argparse
 import importlib.util
 import logging
@@ -7,8 +7,8 @@ import sys
 
 from pipeline.common.config import WORKSPACE
 from pipeline.common.reporting import emit_report
-from pipeline.eval.docker_runtime import DEFAULT_IMAGE, in_container, run_in_docker
 from pipeline.eval.eval_libero import prepare_simulation
+from pipeline.eval.runtime import add_runtime_arguments, dispatch_simulation
 
 
 def main():
@@ -17,31 +17,15 @@ def main():
                         default="libero_spatial")
     parser.add_argument("--task-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--render-backend", choices=["egl", "osmesa"], default="egl",
-                        help="MuJoCo rendering backend inside Docker (default: egl)")
-    parser.add_argument("--image", default=DEFAULT_IMAGE,
-                        help=f"Docker image providing LIBERO Python 3.8 runtime (default: {DEFAULT_IMAGE})")
+    add_runtime_arguments(parser)
     parser.add_argument("--output-dir", type=Path,
                         help="Optionally save camera images and report; otherwise print results only")
     args = parser.parse_args()
     if args.task_id < 0:
         parser.error("task-id must be non-negative")
-    if not in_container():
-        code = run_in_docker(
-            module="pipeline.eval.check_simulation",
-            inner_args=[
-                "--suite", args.suite,
-                "--task-id", str(args.task_id),
-                "--seed", str(args.seed),
-                "--render-backend", args.render_backend,
-            ],
-            workspace=WORKSPACE,
-            image=args.image,
-            render_backend=args.render_backend,
-            output_dir=args.output_dir,
-        )
-        if code:
-            raise SystemExit(code)
+    docker_args = ["--suite", args.suite, "--task-id", str(args.task_id), "--seed", str(args.seed)]
+    if dispatch_simulation(parser, args, module="pipeline.eval.check_simulation", workspace=WORKSPACE,
+                           docker_args=docker_args):
         return
     prepare_simulation(args.render_backend)
     logging.basicConfig(level=logging.INFO, force=True)

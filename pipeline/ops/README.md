@@ -55,7 +55,7 @@ Python 模块保留 `-m 模块名`，Xorg 简写为 `Xorg`；未知启动器、`
 
 ## 环境与当前部署
 
-LIBERO 仿真现统一通过 Docker 镜像 `libero:latest` 运行（宿主机直接调用 `python3 -m pipeline.eval.eval_libero` 或 `python3 -m pipeline.eval.check_simulation` 会自动拉起容器并只读挂载工作区），不再使用宿主机独立的 Python 3.8 安装脚本。
+LIBERO 仿真默认使用 `bash scripts/setup_libero_env.sh` 创建的本地 Python 3.8 环境和 CPU OSMesa。宿主机 `python3 -m pipeline.eval.eval_libero` 和 `python3 -m pipeline.eval.check_simulation` 会自动使用该环境。需要容器时加 `--docker`，默认镜像为 `libero:latest`。
 
 当前 WSL 日常部署仍使用：
 

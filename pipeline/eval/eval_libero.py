@@ -1,5 +1,6 @@
-"""Run the official LIBERO evaluator via the libero:latest Docker container."""
+"""Run the official LIBERO evaluator against a WebSocket policy server."""
 import argparse
+import atexit
 import importlib.util
 import json
 import logging
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 from pipeline.common.config import WORKSPACE
 from pipeline.common.reporting import artifact_directory, emit_report
-from pipeline.eval.docker_runtime import DEFAULT_IMAGE, in_container, run_in_docker
+from pipeline.eval.runtime import add_runtime_arguments, dispatch_simulation
 from pipeline.inference.policy_rpc import read_server_metadata
 
 
@@ -34,7 +35,7 @@ class EvaluationLog(logging.Handler):
 
 def prepare_simulation(backend):
     if sys.version_info[:2] != (3, 8):
-        raise RuntimeError("LIBERO simulation requires the Python 3.8 environment inside the Docker image")
+        raise RuntimeError("LIBERO simulation requires Python 3.8")
     if backend == "osmesa":
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["MUJOCO_GL"] = backend
@@ -42,13 +43,6 @@ def prepare_simulation(backend):
     os.environ["PYNPUT_BACKEND"] = "dummy"
     os.environ["OMP_NUM_THREADS"] = "4"
     os.environ["LP_NUM_THREADS"] = "4"
-    temp_root = Path(tempfile.gettempdir()) / f"openpi-libero-runtime-{os.getpid()}"
-    numba_dir = temp_root / "numba"
-    config_dir = temp_root / "config"
-    datasets_dir = temp_root / "datasets"
-    for directory in (numba_dir, config_dir, datasets_dir):
-        directory.mkdir(parents=True, exist_ok=True)
-    os.environ["NUMBA_CACHE_DIR"] = str(numba_dir)
     root = WORKSPACE / "openpi/third_party/libero/libero/libero"
     required_paths = {
         "benchmark_root": root,
@@ -59,6 +53,16 @@ def prepare_simulation(backend):
     for key, path in required_paths.items():
         if not path.is_dir():
             raise FileNotFoundError(f"Missing LIBERO {key}: {path}")
+    temporary = tempfile.TemporaryDirectory(prefix="openpi-libero-runtime-")
+    # LIBERO caches its config path at import time, so keep it until the process exits.
+    atexit.register(temporary.cleanup)
+    temp_root = Path(temporary.name)
+    numba_dir = temp_root / "numba"
+    config_dir = temp_root / "config"
+    datasets_dir = temp_root / "datasets"
+    for directory in (numba_dir, config_dir, datasets_dir):
+        directory.mkdir()
+    os.environ["NUMBA_CACHE_DIR"] = str(numba_dir)
     paths = {**required_paths, "datasets": datasets_dir}
     # JSON is valid YAML; writing before LIBERO import avoids its interactive prompt.
     (config_dir / "config.yaml").write_text(
@@ -99,7 +103,6 @@ def _forward_args(args):
         "--suite", args.suite,
         "--trials", str(args.trials),
         "--seed", str(args.seed),
-        "--render-backend", args.render_backend,
     ]
     if args.task_id is not None:
         forwarded += ["--task-id", str(args.task_id)]
@@ -116,27 +119,14 @@ def main():
     parser.add_argument("--task-id", type=int, default=None,
                         help="Optional single task index within the suite (default: evaluate all 10 tasks)")
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--render-backend", choices=["egl", "osmesa"], default="egl",
-                        help="MuJoCo rendering backend inside Docker (default: egl)")
-    parser.add_argument("--image", default=DEFAULT_IMAGE,
-                        help=f"Docker image providing LIBERO Python 3.8 runtime (default: {DEFAULT_IMAGE})")
+    add_runtime_arguments(parser)
     parser.add_argument("--output-dir", type=Path,
                         help="Optionally keep evaluation videos and report; otherwise use temporary files")
     args = parser.parse_args()
     if not 1 <= args.trials <= 50 or not 1 <= args.port <= 65535 or (args.task_id is not None and args.task_id < 0):
         parser.error("trials must be 1..50; port 1..65535; task-id >= 0")
-    if not in_container():
-        code = run_in_docker(
-            module="pipeline.eval.eval_libero",
-            inner_args=_forward_args(args),
-            workspace=WORKSPACE,
-            image=args.image,
-            render_backend=args.render_backend,
-            host=args.host,
-            output_dir=args.output_dir,
-        )
-        if code:
-            raise SystemExit(code)
+    if dispatch_simulation(parser, args, module="pipeline.eval.eval_libero", workspace=WORKSPACE,
+                           docker_args=_forward_args(args), host=args.host):
         return
     with artifact_directory(args.output_dir) as output:
         run_evaluation(args, output)

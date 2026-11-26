@@ -9,8 +9,8 @@
 | inference/serve_policy.py | 校验训练记录、LoRA 结构及检查点统计量，启动官方策略服务 | .venv，Python 3.11，单 GPU |
 | inference/policy_rpc.py | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
 | inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
-| eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | 宿主机 `python3` 自动调度 Docker `libero:latest`（默认 GPU EGL，可选 `osmesa`） |
-| eval/eval_libero.py | 调用官方仿真评估入口，按 `--host`/`--port` 连接策略服务，可选保存视频和结构化结果 | 宿主机 `python3` 自动调度 Docker `libero:latest`（默认 GPU EGL，可选 `osmesa`） |
+| eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
+| eval/eval_libero.py | 调用官方仿真评估入口，按 `--host`/`--port` 连接策略服务，可选保存视频和结构化结果 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
 
 将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务会使用所选检查点的 assets/libero/norm_stats.json，并核对其 SHA256 与原训练记录一致。不会用官方完整模型配置替代当前 LoRA 结构。
 
@@ -55,15 +55,32 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.inference.check_policy
 
 默认在终端显示服务身份、统计量 SHA256、各请求耗时和动作范围。需要报告时加 --output runs/pi05_libero/libero_smoke_01/inference_probe_119.json。第一次请求包含编译耗时，不代表稳定推理速度。此检查不比较任务成功率。
 
-## 3. 使用 Docker 验证仿真渲染
+## 3. 准备本地 LIBERO 仿真环境
 
-LIBERO 仿真通过预构建的 `libero:latest` Docker 镜像运行，无需在宿主机安装独立 Python 3.8 环境。宿主机直接用 `python3` 运行入口脚本即可自动启动并清理容器（只读挂载工作区、退出时自动将 `--output-dir` 归属还给宿主机用户并设置 `NO_PROXY`）：
+Ubuntu 或 WSL 上按需安装编译工具和系统渲染库。OpenCV 还需要 GLib，Ubuntu 22.04 的包名为 `libglib2.0-0`，Ubuntu 24.04 及之后使用 `libglib2.0-0t64`。
 
 ~~~bash
+sudo apt-get update
+sudo apt-get install -y build-essential libosmesa6 libegl1 libgl1
+~~~
+
+在 Ubuntu 26.04 上也安装 `patchelf`（0.18 或以上）。如果 glibc 拒绝加载旧版 PyTorch，安装脚本会清除仿真虚拟环境中对应共享库的可执行栈标志，并重新验证导入。 [glibc 2.41 变更说明](https://sourceware.org/pipermail/libc-announce/2025/000045.html)
+
+在工作区根目录构建仿真环境并检查渲染。
+
+~~~bash
+git submodule update --init --recursive
+bash scripts/setup_libero_env.sh
 python3 -B -u -m pipeline.eval.check_simulation
 ~~~
 
-如需切换为 CPU OSMesa 渲染或保存相机复核图，可附加 `--render-backend osmesa` 或 `--output-dir checks/output/libero_simulation/<新目录>`。预期 PASS：一个真实任务完成 reset、加载首个初始状态、执行十个稳定动作；两路图像为非均匀的 uint8 (256,256,3)，机器人状态为有限数值的 (8,)；环境正常关闭。此检查不需要策略服务，也不计算任务成功率。
+安装脚本使用上游 LIBERO 和 OpenPI 客户端的依赖声明，生成 `tools/libero_requirements.lock` 并同步到独立的 `tools/libero-env`。缺少 `uv` 时安装到 `tools/bin`。下载默认直连，可设 `LIBERO_NETWORK_MODE=inherit` 沿用当前终端的代理设置，或用 `LIBERO_PYTHON_NETWORK_MODE` 单独设置 Python 下载路径。首次安装会下载 Python 和 PyTorch 等依赖。
+
+系统 `python3` 会自动使用工作区的 Python 3.8 环境，也可直接运行 `tools/libero-env/bin/python -B -u -m pipeline.eval.check_simulation`。默认 CPU OSMesa 渲染，支持显式 `--render-backend egl`。如果已经将 OSMesa 库解包到 `tools/osmesa/usr/lib/` 下对应的架构目录，入口会自动加载。需要保留相机图和报告时传 `--output-dir checks/output/libero_simulation/<新目录>`。
+
+预期 `PASS`。一个真实任务完成 reset、加载首个初始状态并执行十个稳定动作，两路图像为非均匀的 `uint8 (256, 256, 3)`，机器人状态为有限数值的 `(8,)`。这一步可以独立于策略服务执行。
+
+如需容器运行，给任一 eval 入口加 `--docker`，默认使用 `libero:latest` 和 EGL。`--image <镜像>` 可显式选择 Docker 镜像，`--render-backend osmesa` 可在容器中使用 CPU 渲染。
 
 ## 4. 连接策略服务运行 LIBERO 仿真评估
 
@@ -84,7 +101,7 @@ python3 -B -u -m pipeline.eval.eval_libero \
 
 沿用官方评估：固定 seed 7，先等待十步稳定物体，使用 256 像素渲染、224 像素模型输入、每五步重新规划。图像旋转、状态构造、动作调用及任务时长均由官方入口处理；服务端返回的 `metadata` 会直接记录到结果 JSON 的 `server_metadata` 中，不依赖本机 `runs/.../config.json`。
 
-容器内部将 LIBERO 配置与 Numba 缓存写入容器 `/tmp`，默认不写工作区目录。默认只在终端输出评估结果，官方评估生成的中间视频放在自动清理的临时目录；显式指定 `--output-dir` 时保存 `result.json` 与 `videos/*.mp4`。
+LIBERO 配置和 Numba 缓存写入临时目录，运行结束后自动清理。默认只在终端输出评估结果，中间视频也随临时目录清理。显式指定 `--output-dir` 时保存 `result.json` 与 `videos/*.mp4`。
 
 | 产物 | 内容 |
 |---|---|

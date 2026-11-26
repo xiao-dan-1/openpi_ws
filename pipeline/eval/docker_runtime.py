@@ -90,7 +90,7 @@ def build_docker_command(*, module, inner_args, workspace, image=DEFAULT_IMAGE,
 def run_in_docker(*, module, inner_args, workspace, image=DEFAULT_IMAGE,
                   render_backend="egl", host=None, output_dir=None):
     if shutil.which("docker") is None:
-        raise RuntimeError("docker executable not found; Docker is required for pipeline.eval")
+        raise RuntimeError("docker executable not found for --docker or --image")
     cmd = build_docker_command(
         module=module,
         inner_args=inner_args,

@@ -27,7 +27,7 @@
 | `train/` | 训练、恢复与 batch 容量测试 | `pipeline.train.run`、`pipeline.train.benchmark_batch` |
 | `q5/` | Q5 38维配置、单/双卡训练、恢复与验证集推理 | `pipeline.q5.train`、`pipeline.q5.check_config`、`pipeline.q5.benchmark_fsdp`、`pipeline.q5.evaluate_validation` |
 | `inference/` | 策略服务、客户端通信与推理检查 | `pipeline.inference.serve_policy`、`pipeline.inference.local_docker_serve`、`pipeline.inference.check_policy` |
-| `eval/` | LIBERO Docker 仿真检查与评估（默认 `libero:latest`） | `pipeline.eval.check_simulation`、`pipeline.eval.eval_libero` |
+| `eval/` | LIBERO 本地仿真检查与评估（Python 3.8，可选 Docker） | `pipeline.eval.check_simulation`、`pipeline.eval.eval_libero` |
 | `data/` | 归一化统计与训练输入检查 | `pipeline.data.compute_norm_stats`、`pipeline.data.check_config` |
 | `common/` | 共享配置、运行环境、资产与数据校验 | `config.py`、`runtime.py`、`validation.py`、`qc.py`、`tokenization.py` |
 | `ops/` | GPU 监控与部署说明 | [部署说明](ops/README.md) |
@@ -43,6 +43,8 @@
 `check_policy` 同样支持 `--robot q5/libero`；Q5 默认读取验证集 0、2、4 集的首/中/末帧，
 检查服务身份、关节顺序、绝对动作语义及 `(10, 38)` 有限输出。省略 `--robot` 保留 LIBERO 行为。
 `local_docker_serve` 的历史适配目前仍专用于 LIBERO。
+
+LIBERO 仿真环境由 `bash scripts/setup_libero_env.sh` 安装到 `tools/libero-env`。两个 eval 入口默认使用本地环境和 CPU OSMesa 渲染。安装与运行命令见 [推理与评估](docs/INFERENCE_EVAL.md#3-准备本地-libero-仿真环境)。
 
 旧的 `python pipeline/train.py …` 等调用已迁移；入口对照、回归测试方法和 WSL 当前 Compose 的说明见 [REFACTOR.md](docs/REFACTOR.md)。文档中的历史训练结果仍以原验证记录为准，本次重构不更新模型效果结论。
 
