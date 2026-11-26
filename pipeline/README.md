@@ -27,10 +27,10 @@
 | `train/` | 训练、恢复与 batch 容量测试 | `pipeline.train.run`、`pipeline.train.benchmark_batch` |
 | `q5/` | Q5 38维配置、单/双卡训练、恢复与验证集推理 | `pipeline.q5.train`、`pipeline.q5.check_config`、`pipeline.q5.benchmark_fsdp`、`pipeline.q5.evaluate_validation` |
 | `inference/` | 策略服务、客户端通信与推理检查 | `pipeline.inference.serve_policy`、`pipeline.inference.local_docker_serve`、`pipeline.inference.check_policy` |
-| `eval/` | LIBERO 仿真检查与评估 | `pipeline.eval.check_simulation`、`pipeline.eval.eval_libero` |
+| `eval/` | LIBERO Docker 仿真检查与评估（默认 `libero:latest`） | `pipeline.eval.check_simulation`、`pipeline.eval.eval_libero` |
 | `data/` | 归一化统计与训练输入检查 | `pipeline.data.compute_norm_stats`、`pipeline.data.check_config` |
 | `common/` | 共享配置、运行环境、资产与数据校验 | `config.py`、`runtime.py`、`validation.py`、`qc.py`、`tokenization.py` |
-| `ops/` | 依赖约束与部署说明 | [LIBERO 安装脚本](../scripts/setup_libero_env.sh)、[部署说明](ops/README.md) |
+| `ops/` | GPU 监控与部署说明 | [部署说明](ops/README.md) |
 | `docs/` | 操作说明、历史验证与归档 | [重构与迁移](docs/REFACTOR.md)、`validation/`、`archive/` |
 
 `data/` 只存处理代码；数据集、资产、检查点和运行产物仍放在工作区原目录。现有运行检查保留在 `checks/`，自动化回归测试位于工作区 `tests/`。

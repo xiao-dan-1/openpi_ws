@@ -9,9 +9,8 @@
 | inference/serve_policy.py | 校验训练记录、LoRA 结构及检查点统计量，启动官方策略服务 | .venv，Python 3.11，单 GPU |
 | inference/policy_rpc.py | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
 | inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
-| eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | tools/libero-env，CPU OSMesa |
-| scripts/setup_libero_env.sh | 按固定仓库中的官方依赖表安装独立仿真环境 | tools/libero-env，Python 3.8 |
-| eval/eval_libero.py | 调用官方仿真评估入口，可选保存视频和结构化结果 | tools/libero-env；默认 CPU OSMesa 渲染 |
+| eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | 宿主机 `python3` 自动调度 Docker `libero:latest`（默认 GPU EGL，可选 `osmesa`） |
+| eval/eval_libero.py | 调用官方仿真评估入口，按 `--host`/`--port` 连接策略服务，可选保存视频和结构化结果 | 宿主机 `python3` 自动调度 Docker `libero:latest`（默认 GPU EGL，可选 `osmesa`） |
 
 将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务会使用所选检查点的 assets/libero/norm_stats.json，并核对其 SHA256 与原训练记录一致。不会用官方完整模型配置替代当前 LoRA 结构。
 
@@ -56,82 +55,36 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -u -m pipeline.inference.check_policy
 
 默认在终端显示服务身份、统计量 SHA256、各请求耗时和动作范围。需要报告时加 --output runs/pi05_libero/libero_smoke_01/inference_probe_119.json。第一次请求包含编译耗时，不代表稳定推理速度。此检查不比较任务成功率。
 
-## 3. 准备独立 LIBERO 仿真环境
+## 3. 使用 Docker 验证仿真渲染
 
-保持训练环境原样，另建 Python 3.8 环境。安装采用固定仓库中的 examples/libero/requirements.txt、third_party/libero/requirements.txt 以及 openpi-client 的依赖声明，先合并解析完整依赖、保存 tools/libero_requirements.lock，再同步安装并安装本地 openpi-client 与 LIBERO。这个 compile → sync 步骤遵循 [uv 官方环境锁定流程](https://docs.astral.sh/uv/pip/compile/)。
-
-本机尚未运行安装；此步骤在服务器验收。服务器需要编译工具和渲染系统库，缺少时安装：
+LIBERO 仿真通过预构建的 `libero:latest` Docker 镜像运行，无需在宿主机安装独立 Python 3.8 环境。宿主机直接用 `python3` 运行入口脚本即可自动启动并清理容器（只读挂载工作区、退出时自动将 `--output-dir` 归属还给宿主机用户并设置 `NO_PROXY`）：
 
 ~~~bash
-sudo apt-get update
-sudo apt-get install -y build-essential libosmesa6 libegl1 libgl1 libglib2.0-0
+python3 -B -u -m pipeline.eval.check_simulation
 ~~~
 
-安装 Python 依赖：
+如需切换为 CPU OSMesa 渲染或保存相机复核图，可附加 `--render-backend osmesa` 或 `--output-dir checks/output/libero_simulation/<新目录>`。预期 PASS：一个真实任务完成 reset、加载首个初始状态、执行十个稳定动作；两路图像为非均匀的 uint8 (256,256,3)，机器人状态为有限数值的 (8,)；环境正常关闭。此检查不需要策略服务，也不计算任务成功率。
+
+## 4. 连接策略服务运行 LIBERO 仿真评估
+
+策略服务运行后，在仿真端（本机或跨机 WSL）直接指定 `--host` 与 `--port`：
 
 ~~~bash
-nohup bash scripts/setup_libero_env.sh \
-  >> logs/install_libero_env.log 2>&1 < /dev/null &
-~~~
+# 快速单任务冒烟验证（libero_spatial task 0，1 次试验）
+python3 -B -u -m pipeline.eval.eval_libero \
+  --host 10.110.230.112 --port 8000 \
+  --suite libero_spatial --task-id 0 --trials 1
 
-查看日志：
-
-~~~bash
-tail -n 40 logs/install_libero_env.log
-~~~
-
-安装脚本使用工作区 uv、Python 下载目录和包缓存，网络模式只作用于下载子进程。旧依赖的构建环境使用 setuptools<75.4，以兼容 Python 3.8。安装后执行依赖一致性检查，并将实际安装版本保存到 tools/libero_installed.txt。首次安装会下载 Python 和较大的 PyTorch 包；进程结束后仍需通过下面的真实仿真验证。
-
-网络设置需要按服务器实际下载站测速确认，不能从 Google/魔搭的速度推断 GitHub、PyPI 或 PyTorch。当前 Python 与 PyTorch 下载站尚未完成服务器测速。脚本提供：
-
-| 设置 | 作用 |
-|---|---|
-| LIBERO_NETWORK_MODE=direct | 包下载绕过代理，默认值；仅参考此前直连更快的经验，尚未逐站验证 |
-| LIBERO_NETWORK_MODE=inherit | 包下载保留终端已有的代理与 NO_PROXY 设置 |
-| LIBERO_PYTHON_NETWORK_MODE=inherit | 可让 Python 解释器下载单独继承终端网络设置 |
-| UV_DEFAULT_INDEX | 指定经服务器验证的 PyPI 镜像；不改全局配置 |
-| UV_HTTP_TIMEOUT / UV_CONCURRENT_DOWNLOADS | 默认 120 秒 / 4，可按网络调整 |
-
-国内普通包源可测试 [TUNA PyPI 镜像](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)。PyTorch 1.11.0+cu113 的 cp38 Linux 包仍使用 [PyTorch 官方索引](https://download.pytorch.org/whl/cu113/torch/)，不能假定普通 PyPI 镜像包含这类专用 wheel；Python 解释器下载也不受 PyPI 索引设置影响。先验证可达性与速度，再选择环境变量，不承诺镜像一定更快。
-
-默认仿真使用 OSMesa 在 CPU 上渲染，并隐藏仿真进程的 CUDA 设备。GPU 用于另一个进程中的模型推理。--render-backend egl 为可选路径，其显卡映射与驱动依赖需要另行核对。
-
-Python 依赖安装完成后，先独立验证渲染；此检查不需要策略服务或空闲 GPU：
-
-~~~bash
-cd /mnt/sda/xd/openpi_ws
-nohup env PYTHONDONTWRITEBYTECODE=1 \
-  tools/libero-env/bin/python -u -m pipeline.eval.check_simulation \
-  >> logs/check_simulation.log 2>&1 < /dev/null &
-~~~
-
-~~~bash
-tail -n 50 logs/check_simulation.log
-~~~
-
-预期 PASS：一个真实任务完成 reset、加载首个初始状态、执行十个稳定动作；两路图像为非均匀的 uint8 (256,256,3)，机器人状态为有限数值的 (8,)；环境正常关闭。默认只打印结果；加 --output-dir checks/output/libero_simulation/<新目录> 才保存报告和按官方方向旋转后的 agentview.png、wrist.png。此检查只验证仿真，不使用学习策略，不计算任务成功率。
-
-## 4. 先跑一个任务集合，每任务一次
-
-确认独立环境安装完成，策略服务及九观测推理检查通过后：
-
-~~~bash
-nohup env PYTHONDONTWRITEBYTECODE=1 \
-  tools/libero-env/bin/python -u -m pipeline.eval.eval_libero \
-  --exp-name libero_smoke_01 --step 119 --port 8000 \
+# 整套 10 任务各跑 1 次，并保存视频与结果
+python3 -B -u -m pipeline.eval.eval_libero \
+  --host 10.110.230.112 --port 8000 \
   --suite libero_spatial --trials 1 \
-  >> logs/eval_libero_smoke_01_119_spatial.log 2>&1 < /dev/null &
+  --output-dir runs/pi05_libero/eval_spatial_01
 ~~~
 
-~~~bash
-tail -n 50 logs/eval_libero_smoke_01_119_spatial.log
-~~~
+沿用官方评估：固定 seed 7，先等待十步稳定物体，使用 256 像素渲染、224 像素模型输入、每五步重新规划。图像旋转、状态构造、动作调用及任务时长均由官方入口处理；服务端返回的 `metadata` 会直接记录到结果 JSON 的 `server_metadata` 中，不依赖本机 `runs/.../config.json`。
 
-沿用官方评估：十个任务各一次，固定 seed 7，先等待十步稳定物体，使用 256 像素渲染、224 像素模型输入、每五步重新规划。图像旋转、状态构造、动作调用及任务时长均由官方入口处理。
-
-包装脚本会在工作区 .cache/libero 中生成路径配置，避免 LIBERO 首次导入时交互询问；不改用户主目录中的 LIBERO 配置。
-
-默认只在终端输出评估结果，官方评估生成的中间视频放在自动清理的临时目录。需要报告和回放时，命令加 --output-dir runs/pi05_libero/libero_smoke_01/eval_119/libero_spatial_01；以下产物说明适用于显式保存模式。
+容器内部将 LIBERO 配置与 Numba 缓存写入容器 `/tmp`，默认不写工作区目录。默认只在终端输出评估结果，官方评估生成的中间视频放在自动清理的临时目录；显式指定 `--output-dir` 时保存 `result.json` 与 `videos/*.mp4`。
 
 | 产物 | 内容 |
 |---|---|

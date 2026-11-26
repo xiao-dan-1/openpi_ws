@@ -53,9 +53,9 @@ Python 模块保留 `-m 模块名`，Xorg 简写为 `Xorg`；未知启动器、`
 `N/A` 保留为未知值；驱动报告的进程显存之和不保证等于整卡已用显存。
 终端较短时用 `--once --details` 配合滚动或 `less` 查看，或用 `--gpus` 缩小范围。默认只读且不保存报告。
 
-## 环境安装与当前部署
+## 环境与当前部署
 
-独立 LIBERO 环境安装入口：在工作区根目录执行 `bash scripts/setup_libero_env.sh`。`--help` 只显示说明；不传该参数会按原流程安装 Python 和依赖。构建约束保存在本目录的 `libero_build_constraints.txt`。脚本从自身所在的 `scripts/` 上一级定位工作区。
+LIBERO 仿真现统一通过 Docker 镜像 `libero:latest` 运行（宿主机直接调用 `python3 -m pipeline.eval.eval_libero` 或 `python3 -m pipeline.eval.check_simulation` 会自动拉起容器并只读挂载工作区），不再使用宿主机独立的 Python 3.8 安装脚本。
 
 当前 WSL 日常部署仍使用：
 

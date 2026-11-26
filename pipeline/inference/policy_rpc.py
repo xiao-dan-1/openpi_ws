@@ -39,7 +39,7 @@ def read_server_metadata(host, port):
 def verify_server_metadata(metadata, experiment, step, *, workspace=None, robot="libero"):
     if robot not in ("libero", "q5"):
         raise ValueError(f"Unsupported robot: {robot}")
-    root = WORKSPACE if workspace is None else workspace
+    root = WORKSPACE if workspace is None else Path(workspace)
     original = json.loads((root / "runs" / f"pi05_{robot}" / experiment / "config.json").read_text())
     identity = metadata.get("pipeline", {})
     expected = {"experiment": experiment, "checkpoint_step": step,

@@ -177,6 +177,7 @@ class SimulationReportTests(unittest.TestCase):
                 console = io.StringIO()
                 with mock.patch.object(sys, "argv", argv), mock.patch.dict(sys.modules), \
                      contextlib.redirect_stdout(console), mock.patch.object(check_simulation, "WORKSPACE", root), \
+                     mock.patch.object(check_simulation, "in_container", return_value=True), \
                      mock.patch.object(check_simulation, "prepare_simulation"), \
                      mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
                      mock.patch("importlib.util.module_from_spec", return_value=official):
@@ -199,7 +200,7 @@ class EvaluationArtifactTests(unittest.TestCase):
             with self.subTest(save=save), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 output = root / "reports"
-                argv = ["eval_libero", "--exp-name", "demo", "--step", "119"]
+                argv = ["eval_libero", "--host", "127.0.0.1", "--port", "8000"]
                 if save:
                     argv += ["--output-dir", str(output)]
                 video_directories = []
@@ -216,9 +217,10 @@ class EvaluationArtifactTests(unittest.TestCase):
                 spec = SimpleNamespace(name="_pipeline_libero_evaluator", loader=SimpleNamespace(exec_module=lambda module: None))
                 console = io.StringIO()
                 with mock.patch.object(sys, "argv", argv), mock.patch.dict(sys.modules), \
-                     contextlib.redirect_stdout(console), mock.patch.object(eval_libero, "prepare_simulation"), \
-                     mock.patch.object(eval_libero, "read_server_metadata", return_value={}), \
-                     mock.patch.object(eval_libero, "verify_server_metadata", return_value={"fixture": True}), \
+                     contextlib.redirect_stdout(console), \
+                     mock.patch.object(eval_libero, "in_container", return_value=True), \
+                     mock.patch.object(eval_libero, "prepare_simulation"), \
+                     mock.patch.object(eval_libero, "read_server_metadata", return_value={"fixture": True}), \
                      mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
                      mock.patch("importlib.util.module_from_spec", return_value=official):
                     eval_libero.main()
