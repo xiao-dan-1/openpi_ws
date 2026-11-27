@@ -207,11 +207,14 @@ class EvaluationArtifactTests(unittest.TestCase):
                 video_directories = []
 
                 def evaluate(args):
+                    self.assertEqual(args.task_suite_name, "libero_spatial")
+                    self.assertEqual(args.num_trials_per_task, 50)
+                    self.assertEqual(args.seed, 7)
                     videos = Path(args.video_out_path)
                     video_directories.append(videos)
                     videos.mkdir()
                     (videos / "fixture.mp4").write_bytes(b"mock video")
-                    logging.info("Total episodes: 10")
+                    logging.info("Total episodes: 500")
                     logging.info("Total success rate: 0.0")
 
                 official = SimpleNamespace(Args=SimpleNamespace, eval_libero=evaluate)
@@ -228,7 +231,8 @@ class EvaluationArtifactTests(unittest.TestCase):
                     eval_libero.main()
                 report = json.loads(console.getvalue())
                 self.assertEqual(report["status"], "PASS")
-                self.assertEqual(report["episodes_completed"], 10)
+                self.assertEqual(report["trials_per_task"], 50)
+                self.assertEqual(report["episodes_completed"], 500)
                 self.assertEqual(report["render_backend"], "osmesa")
                 if save:
                     self.assertEqual(json.loads((output / "result.json").read_text()), report)

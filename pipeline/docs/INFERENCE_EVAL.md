@@ -40,7 +40,7 @@ tail -n 60 logs/serve_libero_smoke_01_119.log
 curl --noproxy '*' -fsS http://127.0.0.1:8000/healthz
 ~~~
 
-预期输出 OK。模型加载完成后服务会持续运行；首次动作请求还需要编译推理计算。服务绑定本机地址，评估程序在同一服务器连接。若 8000 已被占用，请为服务和客户端使用相同的其他端口。
+预期输出 OK。模型加载完成后服务会持续运行；首次动作请求还需要编译推理计算。策略服务默认监听 `0.0.0.0`，同机客户端可用 `127.0.0.1`，跨机客户端使用服务端内网 IP。也可通过服务端 `--host` 指定监听地址。若 8000 已被占用，请为服务和客户端使用相同的其他端口。
 
 ## 2. 真实数据观测的推理检查
 
@@ -84,7 +84,9 @@ python3 -B -u -m pipeline.eval.check_simulation
 
 ## 4. 连接策略服务运行 LIBERO 仿真评估
 
-策略服务运行后，在仿真端（本机或跨机 WSL）直接指定 `--host` 与 `--port`：
+策略服务在内网地址监听且端口可达时，仿真端通过 `--host` 与 `--port` 直接建立 WebSocket 连接。若服务只监听 `127.0.0.1`，跨机连接可以使用 SSH 本地端口转发。
+
+默认跑 `libero_spatial` 的 10 个任务，每任务 50 回合，共 500 回合。官方评估循环逐个使用每个任务的预设初始状态 `0–49`。短测显式传 `--trials 1`，每个所选任务使用初始状态 `0`。
 
 ~~~bash
 # 快速单任务冒烟验证（libero_spatial task 0，1 次试验）
@@ -92,10 +94,10 @@ python3 -B -u -m pipeline.eval.eval_libero \
   --host 10.110.230.112 --port 8000 \
   --suite libero_spatial --task-id 0 --trials 1
 
-# 整套 10 任务各跑 1 次，并保存视频与结果
+# 整套 10 任务各跑 50 次，并保存视频与结果
 python3 -B -u -m pipeline.eval.eval_libero \
   --host 10.110.230.112 --port 8000 \
-  --suite libero_spatial --trials 1 \
+  --suite libero_spatial \
   --output-dir runs/pi05_libero/eval_spatial_01
 ~~~
 
@@ -115,9 +117,9 @@ result.json 的 PASS 表示评估流程完整执行；task_success_rate 单独�
 
 先完成上述服务、真实推理和仿真验收，再按 BATCH_BENCHMARK.md 测试实际 batch 容量与吞吐，确定正式配置。现有默认 batch 1、30000 步不等于已验证的效果方案。之后用新实验名 libero_lora_01 从 pi05_base 训练，命令模板见 [README.md](../README.md)。
 
-正式模型评估时，将服务和客户端的 --exp-name、--step 同时替换成正式检查点。支持 libero_spatial、libero_object、libero_goal、libero_10 四套，每套默认十个任务。完整评估可将 --trials 设置为 50；耗时显著增加。
+正式模型评估时，在策略服务端通过 `--policy.dir` 选择检查点，在评估端指定对应的 `--host` 和 `--port`。支持 `libero_spatial`、`libero_object`、`libero_goal`、`libero_10`，每套默认 500 回合，四套需分别运行。
 
-当前官方评估入口的视频文件名只包含任务与成功/失败，多个试验的同类视频可能覆盖。默认每任务一次的流程验收不受此影响。成功率仍由全部试验计数，查看重复试验视频时需注意这个官方命名行为。
+官方评估入口按任务和成功或失败命名视频，同一任务的同类视频会覆盖。成功率按全部回合计数。
 
 ## 验证范围
 

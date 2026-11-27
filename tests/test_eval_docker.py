@@ -80,7 +80,6 @@ class EvalEntrypointTests(unittest.TestCase):
             "--port", "28126",
             "--suite", "libero_spatial",
             "--task-id", "0",
-            "--trials", "1",
         ]
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(runtime, "in_container", return_value=False), \
@@ -94,6 +93,8 @@ class EvalEntrypointTests(unittest.TestCase):
         self.assertEqual(kwargs["image"], "libero:latest")
         self.assertIn("--task-id", kwargs["inner_args"])
         self.assertIn("0", kwargs["inner_args"])
+        trials_index = kwargs["inner_args"].index("--trials")
+        self.assertEqual(kwargs["inner_args"][trials_index + 1], "50")
 
     def test_check_simulation_selects_docker_for_explicit_image(self):
         argv = ["check_simulation", "--image", "libero:custom", "--render-backend", "osmesa"]
@@ -173,6 +174,7 @@ class EvalEntrypointTests(unittest.TestCase):
             self.assertEqual(report["host"], "10.110.230.112")
             self.assertEqual(report["port"], 28126)
             self.assertEqual(report["task_id"], 3)
+            self.assertEqual(report["trials_per_task"], 1)
             self.assertEqual(report["episodes_completed"], 1)
             self.assertEqual(report["task_success_rate"], 1.0)
             self.assertEqual(report["server_metadata"], server_meta)

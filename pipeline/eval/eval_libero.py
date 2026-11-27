@@ -115,7 +115,8 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Policy server port (default: 8000)")
     parser.add_argument("--suite", choices=["libero_spatial", "libero_object", "libero_goal", "libero_10"],
                         default="libero_spatial")
-    parser.add_argument("--trials", type=int, default=1)
+    parser.add_argument("--trials", type=int, default=50,
+                        help="Rollouts per task using the first N official initial states (default: %(default)s)")
     parser.add_argument("--task-id", type=int, default=None,
                         help="Optional single task index within the suite (default: evaluate all 10 tasks)")
     parser.add_argument("--seed", type=int, default=7)
