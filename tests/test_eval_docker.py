@@ -96,6 +96,24 @@ class EvalEntrypointTests(unittest.TestCase):
         trials_index = kwargs["inner_args"].index("--trials")
         self.assertEqual(kwargs["inner_args"][trials_index + 1], "50")
 
+    def test_docker_forwards_workers_and_no_videos(self):
+        argv = [
+            "eval_libero",
+            "--docker",
+            "--host", "10.110.230.112",
+            "--port", "28126",
+            "--workers", "4",
+            "--no-videos",
+        ]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(runtime, "in_container", return_value=False), \
+             mock.patch.object(runtime, "run_in_docker", return_value=0) as runner:
+            eval_libero.main()
+        inner = runner.call_args.kwargs["inner_args"]
+        workers_index = inner.index("--workers")
+        self.assertEqual(inner[workers_index + 1], "4")
+        self.assertIn("--no-videos", inner)
+
     def test_check_simulation_selects_docker_for_explicit_image(self):
         argv = ["check_simulation", "--image", "libero:custom", "--render-backend", "osmesa"]
         with mock.patch.object(sys, "argv", argv), \
@@ -125,7 +143,8 @@ class EvalEntrypointTests(unittest.TestCase):
         prepare.assert_called_once_with("osmesa")
 
     def test_legacy_exp_name_and_step_rejected(self):
-        for bad in [["--exp-name", "demo", "--step", "119"], ["--port", "0"], ["--trials", "0"], ["--task-id", "-1"]]:
+        for bad in [["--exp-name", "demo", "--step", "119"], ["--port", "0"], ["--trials", "0"], ["--task-id", "-1"],
+                    ["--workers", "0"], ["--workers", "2", "--task-id", "0"]]:
             with self.subTest(bad=bad), \
                  mock.patch.object(sys, "argv", ["eval_libero", *bad]), \
                  mock.patch.object(eval_libero, "dispatch_simulation") as dispatch, \
@@ -219,6 +238,125 @@ class EvalEntrypointTests(unittest.TestCase):
             self.assertEqual(executable, python)
             self.assertEqual(command, [str(python), "-B", "-u", "-m", module, *argv[1:]])
             self.assertEqual(env["LD_LIBRARY_PATH"].split(os.pathsep), ["/custom/lib", str(library_dir)])
+
+    def test_no_videos_skips_imageio_mimwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            called = []
+            fake_imageio = SimpleNamespace(mimwrite=lambda *a, **kw: called.append(a))
+
+            def evaluate(args):
+                fake_imageio.mimwrite("ignored.mp4", [])
+                logging.info("# successes: 7 (70.0%%)")
+                logging.info("Total episodes: 10")
+                logging.info("Total success rate: 0.7")
+
+            official = SimpleNamespace(Args=SimpleNamespace, imageio=fake_imageio, eval_libero=evaluate)
+            spec = SimpleNamespace(name="_pipeline_libero_evaluator", loader=SimpleNamespace(exec_module=lambda m: None))
+            console = io.StringIO()
+            argv = ["eval_libero", "--host", "127.0.0.1", "--port", "8000", "--trials", "1", "--no-videos"]
+            with mock.patch.object(sys, "argv", argv), \
+                 contextlib.redirect_stdout(console), \
+                 mock.patch.object(eval_libero, "WORKSPACE", root), \
+                 mock.patch.object(runtime, "in_container", return_value=True), \
+                 mock.patch.object(eval_libero, "prepare_simulation"), \
+                 mock.patch.object(eval_libero, "read_server_metadata", return_value={"ok": True}), \
+                 mock.patch("importlib.util.spec_from_file_location", return_value=spec), \
+                 mock.patch("importlib.util.module_from_spec", return_value=official):
+                eval_libero.main()
+            self.assertEqual(called, [])
+            report = json.loads(console.getvalue())
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(report["episodes_succeeded"], 7)
+            self.assertTrue(report["no_videos"])
+
+    def test_parallel_workers_fan_out_and_aggregate(self):
+        for save in (False, True):
+            with self.subTest(save=save), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                output = root / "parallel_eval"
+                seen_envs = []
+                created_task_dirs = []
+
+                def fake_popen(cmd, **kwargs):
+                    seen_envs.append(kwargs["env"])
+                    tid = int(cmd[cmd.index("--task-id") + 1])
+                    task_dir = Path(cmd[cmd.index("--output-dir") + 1])
+                    created_task_dirs.append(task_dir)
+                    videos = task_dir / "videos"
+                    videos.mkdir(parents=True)
+                    if "--no-videos" not in cmd:
+                        (videos / f"rollout_task_{tid}.mp4").write_bytes(b"mp4")
+                    succeeded = 1 if tid % 2 == 0 else 0
+                    (task_dir / "result.json").write_text(json.dumps({
+                        "status": "PASS",
+                        "task_id": tid,
+                        "episodes_completed": 2,
+                        "episodes_succeeded": succeeded,
+                        "task_success_rate": succeeded / 2,
+                        "elapsed_seconds": 0.5,
+                    }))
+                    return SimpleNamespace(wait=lambda: 0, poll=lambda: 0, terminate=lambda: None, kill=lambda: None)
+
+                argv = ["eval_libero", "--host", "127.0.0.1", "--port", "8000", "--trials", "2", "--workers", "4"]
+                if save:
+                    argv += ["--output-dir", str(output)]
+                console = io.StringIO()
+                with mock.patch.object(sys, "argv", argv), \
+                     contextlib.redirect_stdout(console), \
+                     mock.patch.object(runtime, "in_container", return_value=True), \
+                     mock.patch.object(eval_libero, "read_server_metadata", return_value={"pipeline": {"variant": "official"}}), \
+                     mock.patch.object(eval_libero.subprocess, "Popen", side_effect=fake_popen):
+                    eval_libero.main()
+
+                report = json.loads(console.getvalue())
+                self.assertEqual(report["status"], "PASS")
+                self.assertEqual(report["workers"], 4)
+                self.assertEqual(report["episodes_completed"], 20)
+                self.assertEqual(report["episodes_succeeded"], 5)
+                self.assertAlmostEqual(report["task_success_rate"], 0.25)
+                self.assertEqual([item["task_id"] for item in report["tasks"]], list(range(10)))
+                self.assertTrue(all(env["OMP_NUM_THREADS"] == "1" and env["LP_NUM_THREADS"] == "1" for env in seen_envs))
+                if save:
+                    self.assertEqual(json.loads((output / "result.json").read_text()), report)
+                    self.assertEqual(len(list((output / "videos").glob("*.mp4"))), 10)
+                else:
+                    self.assertEqual(list(root.iterdir()), [])
+                    self.assertTrue(all(not d.exists() for d in created_task_dirs))
+
+    def test_parallel_workers_reports_failure_when_task_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "parallel_fail"
+
+            def fake_popen(cmd, **kwargs):
+                tid = int(cmd[cmd.index("--task-id") + 1])
+                task_dir = Path(cmd[cmd.index("--output-dir") + 1])
+                task_dir.mkdir(parents=True)
+                if tid == 3:
+                    return SimpleNamespace(wait=lambda: 1, poll=lambda: 1, terminate=lambda: None, kill=lambda: None)
+                (task_dir / "result.json").write_text(json.dumps({
+                    "status": "PASS",
+                    "task_id": tid,
+                    "episodes_completed": 1,
+                    "episodes_succeeded": 1,
+                    "task_success_rate": 1.0,
+                    "elapsed_seconds": 0.2,
+                }))
+                return SimpleNamespace(wait=lambda: 0, poll=lambda: 0, terminate=lambda: None, kill=lambda: None)
+
+            argv = ["eval_libero", "--host", "127.0.0.1", "--port", "8000", "--trials", "1", "--workers", "3",
+                    "--no-videos", "--output-dir", str(output)]
+            with mock.patch.object(sys, "argv", argv), \
+                 contextlib.redirect_stdout(io.StringIO()), \
+                 mock.patch.object(runtime, "in_container", return_value=True), \
+                 mock.patch.object(eval_libero, "read_server_metadata", return_value={"ok": True}), \
+                 mock.patch.object(eval_libero.subprocess, "Popen", side_effect=fake_popen), \
+                 self.assertRaisesRegex(RuntimeError, "Parallel LIBERO tasks failed"):
+                eval_libero.main()
+            saved = json.loads((output / "result.json").read_text())
+            self.assertEqual(saved["status"], "FAIL")
+            self.assertEqual(saved["tasks"][3]["status"], "FAIL")
+            self.assertEqual(saved["tasks"][3]["returncode"], 1)
 
 
 if __name__ == "__main__":

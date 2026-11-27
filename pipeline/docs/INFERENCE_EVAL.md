@@ -6,13 +6,13 @@
 
 | 文件 | 用途 | 运行环境 |
 |---|---|---|
-| inference/serve_policy.py | 校验训练记录、LoRA 结构及检查点统计量，启动官方策略服务 | .venv，Python 3.11，单 GPU |
-| inference/policy_rpc.py | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
-| inference/check_policy.py | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
-| eval/check_simulation.py | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
-| eval/eval_libero.py | 调用官方仿真评估入口，按 `--host`/`--port` 连接策略服务，可选保存视频和结构化结果 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
+| `inference/serve_policy.py` | 校验检查点、自动识别 LIBERO 官方全参或本地 LoRA 结构、启动前 dummy warmup 并启动官方策略服务 | .venv，Python 3.11，单 GPU |
+| `inference/policy_rpc.py` | 服务健康检查与实验、步骤、模型、统计量身份校验 | 两个环境均兼容 |
+| `inference/check_policy.py` | 发送真实数据中的九个观测，检查返回动作 | .venv，CPU 客户端 |
+| `eval/check_simulation.py` | 独立检查单场景、初始化、十个稳定动作、两路图像及状态 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
+| `eval/eval_libero.py` | 调用官方仿真评估入口，支持 `--workers` 任务级并发与 `--no-videos`，按 `--host`/`--port` 连接策略服务 | `tools/libero-env`（Python 3.8，默认 CPU OSMesa） |
 
-将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务会使用所选检查点的 assets/libero/norm_stats.json，并核对其 SHA256 与原训练记录一致。不会用官方完整模型配置替代当前 LoRA 结构。
+将整个 pipeline 文件夹更新到 /mnt/sda/xd/openpi_ws/pipeline。推理服务自动识别检查点内的参数元数据与统计目录：若为本地训练的 LoRA 检查点，则沿用原训练记录中的 LoRA 结构与 `assets/libero/norm_stats.json`；若为 `scripts/download_weights.sh pi05_libero` 下载的官方全参权重，则自动匹配全参 `pi05_libero` 配置与 `assets/physical-intelligence/libero/norm_stats.json`，可直接用于复现官方基线。
 
 ## 1. 启动检查点策略服务
 
@@ -20,15 +20,24 @@
 
 ~~~bash
 cd /mnt/sda/xd/openpi_ws
+# 1) 启动本地微调 LoRA 检查点服务
 nohup env PYTHONDONTWRITEBYTECODE=1 \
   .venv/bin/python -u -m pipeline.inference.serve_policy \
   --gpu GPU-93947930-8f97-38bc-fcea-0b9d168bc871 \
   --policy.config pi05_libero \
   --policy.dir checkpoints/pi05_libero/libero_smoke_01/119 --port 8000 \
   >> logs/serve_libero_smoke_01_119.log 2>&1 < /dev/null &
+
+# 2) 或启动官方全参 pi05_libero 基线权重服务（先执行 bash scripts/download_weights.sh pi05_libero）
+nohup env PYTHONDONTWRITEBYTECODE=1 \
+  .venv/bin/python -u -m pipeline.inference.serve_policy \
+  --gpu GPU-93947930-8f97-38bc-fcea-0b9d168bc871 \
+  --policy.config pi05_libero \
+  --policy.dir openpi_cache/openpi-assets/checkpoints/pi05_libero --port 8000 \
+  >> logs/serve_pi05_libero_official.log 2>&1 < /dev/null &
 ~~~
 
-检查加载进度：
+服务会在打开 WebSocket 端口前自动执行一次 dummy warmup 推理完成 JAX/XLA 编译（可通过 `--skip-warmup` 跳过），避免客户端首帧请求长时间卡顿或超时。检查加载进度：
 
 ~~~bash
 tail -n 60 logs/serve_libero_smoke_01_119.log
@@ -88,17 +97,25 @@ python3 -B -u -m pipeline.eval.check_simulation
 
 默认跑 `libero_spatial` 的 10 个任务，每任务 50 回合，共 500 回合。官方评估循环逐个使用每个任务的预设初始状态 `0–49`。短测显式传 `--trials 1`，每个所选任务使用初始状态 `0`。
 
+整套 10 任务评估支持 `--workers N` 按 `task_id` 并发启动多个仿真进程（仅在未传 `--task-id` 时可用，推荐按 CPU 核心数设为 `4`–`10`，每个子进程自动限制为单线程 BLAS/OMP 避免抢核）；大批量跑分时可加 `--no-videos` 跳过 MP4 编码以进一步节省时间和磁盘。
+
 ~~~bash
 # 快速单任务冒烟验证（libero_spatial task 0，1 次试验）
 python3 -B -u -m pipeline.eval.eval_libero \
   --host 10.110.230.112 --port 8000 \
   --suite libero_spatial --task-id 0 --trials 1
 
-# 整套 10 任务各跑 50 次，并保存视频与结果
+# 整套 10 任务各跑 50 次（并发 5 进程，保留汇总结果与视频）
 python3 -B -u -m pipeline.eval.eval_libero \
   --host 10.110.230.112 --port 8000 \
-  --suite libero_spatial \
+  --suite libero_spatial --workers 5 \
   --output-dir runs/pi05_libero/eval_spatial_01
+
+# 高速纯跑分（并发 8 进程，不编码 MP4 视频）
+python3 -B -u -m pipeline.eval.eval_libero \
+  --host 10.110.230.112 --port 8000 \
+  --suite libero_spatial --workers 8 --no-videos \
+  --output-dir runs/pi05_libero/eval_spatial_fast
 ~~~
 
 沿用官方评估：固定 seed 7，先等待十步稳定物体，使用 256 像素渲染、224 像素模型输入、每五步重新规划。图像旋转、状态构造、动作调用及任务时长均由官方入口处理；服务端返回的 `metadata` 会直接记录到结果 JSON 的 `server_metadata` 中，不依赖本机 `runs/.../config.json`。

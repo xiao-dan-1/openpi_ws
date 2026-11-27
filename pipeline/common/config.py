@@ -37,6 +37,41 @@ def prepare_environment(*, cpu=True, gpu=None, cache_dir=None, memory_fraction=D
         configure_memory_fraction(memory_fraction)
 
 
+def _validated_libero_baseline(upstream):
+    baseline = upstream.get_config("pi05_libero")
+    if not (baseline.model.pi05 and baseline.model.action_horizon == 10
+            and baseline.model.action_dim == 32 and not baseline.model.discrete_state_input
+            and not baseline.data.extra_delta_transform):
+        raise ValueError("Official pi05_libero baseline changed; review pipeline assumptions")
+    return baseline
+
+
+def build_official_config(*, asset_id=None):
+    """Return the official full-parameter pi05_libero config for inference."""
+    from openpi.training import config as upstream
+
+    baseline = _validated_libero_baseline(upstream)
+    data_changes = {}
+    if "repo_root" in {field.name for field in dataclasses.fields(baseline.data)}:
+        data_changes["repo_root"] = None
+    if asset_id is not None:
+        data_changes["assets"] = dataclasses.replace(baseline.data.assets, asset_id=asset_id)
+    data = dataclasses.replace(baseline.data, **data_changes) if data_changes else baseline.data
+    return dataclasses.replace(baseline, data=data)
+
+
+def describe_model(config):
+    return {
+        "pi05": config.model.pi05,
+        "paligemma": config.model.paligemma_variant,
+        "action_expert": config.model.action_expert_variant,
+        "action_horizon": config.model.action_horizon,
+        "action_dim": config.model.action_dim,
+        "max_token_len": config.model.max_token_len,
+        "discrete_state_input": config.model.discrete_state_input,
+    }
+
+
 def build_config(*, profile="smoke", exp_name="smoke", batch_size=None, steps=None,
                  resume=False, assets_base_dir=None, num_workers=0):
     from openpi.training import config as upstream
@@ -47,11 +82,7 @@ def build_config(*, profile="smoke", exp_name="smoke", batch_size=None, steps=No
     if num_workers < 0:
         raise ValueError("num_workers must be non-negative")
 
-    baseline = upstream.get_config("pi05_libero")
-    if not (baseline.model.pi05 and baseline.model.action_horizon == 10
-            and baseline.model.action_dim == 32 and not baseline.model.discrete_state_input
-            and not baseline.data.extra_delta_transform):
-        raise ValueError("Official pi05_libero baseline changed; review pipeline assumptions")
+    baseline = _validated_libero_baseline(upstream)
     assets = Path(assets_base_dir).resolve() if assets_base_dir else WORKSPACE / "assets"
     # Local ID 'libero' resolves directly to workspace/datasets/libero. It is a
     # filesystem alias, NOT a different dataset or a published Hugging Face repo.
@@ -121,11 +152,7 @@ def describe(config, profile):
         "upstream_commit_actual": verify_upstream_revision(), "baseline": "pi05_libero",
         "profile": profile, "source_dataset": SOURCE_REPO_ID,
         "local_dataset_alias": LOCAL_REPO_ID, "data_root": str(WORKSPACE / "datasets/libero"),
-        "model": {"pi05": config.model.pi05, "paligemma": config.model.paligemma_variant,
-                  "action_expert": config.model.action_expert_variant,
-                  "action_horizon": config.model.action_horizon, "action_dim": config.model.action_dim,
-                  "max_token_len": config.model.max_token_len,
-                  "discrete_state_input": config.model.discrete_state_input},
+        "model": describe_model(config),
         "batch_size": config.batch_size, "workers": config.num_workers,
         "steps": config.num_train_steps, "ema_decay": config.ema_decay,
         "learning_rate": dataclasses.asdict(config.lr_schedule),

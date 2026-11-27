@@ -37,15 +37,46 @@ class ServePolicyTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(serve_policy.runtime, "require_tokenizer"))
         self.q5_builder = self.stack.enter_context(mock.patch.object(q5_config, "build_config"))
         self.libero_builder = self.stack.enter_context(mock.patch.object(libero_config, "build_config"))
+        self.libero_official_builder = self.stack.enter_context(mock.patch.object(libero_config, "build_official_config"))
         self.describe = self.stack.enter_context(mock.patch.object(libero_config, "describe"))
         self.report = self.stack.enter_context(mock.patch.object(serve_policy, "emit_report"))
-        self.create_policy = mock.Mock(return_value=SimpleNamespace(metadata={"robot_type": "q5"}))
+        self.policy = SimpleNamespace(
+            metadata={"robot_type": "q5"},
+            infer=mock.Mock(return_value={"actions": [[0.0]]}),
+        )
+        self.create_policy = mock.Mock(return_value=self.policy)
         self.server = mock.Mock()
         self.stack.enter_context(mock.patch.dict(sys.modules, {
             "jax": SimpleNamespace(default_backend=lambda: "gpu", device_count=lambda: 1),
             "openpi.policies.policy_config": SimpleNamespace(create_trained_policy=self.create_policy),
             "openpi.serving.websocket_policy_server": SimpleNamespace(WebsocketPolicyServer=self.server),
         }))
+
+    def official_fixture(self, checkpoint_path=None):
+        self.checkpoint = (
+            self.root / "openpi_cache/openpi-assets/checkpoints/pi05_libero"
+            if checkpoint_path is None else Path(checkpoint_path)
+        )
+        self.stats = self.checkpoint / "assets/physical-intelligence/libero/norm_stats.json"
+        self.stats.parent.mkdir(parents=True, exist_ok=True)
+        self.stats.write_text('{"official":true}')
+        params_dir = self.checkpoint / "params"
+        params_dir.mkdir(parents=True, exist_ok=True)
+        (params_dir / "manifest.ocdbt").write_text("ocdbt")
+        (params_dir / "_METADATA").write_text(json.dumps({
+            "tree_metadata": {
+                "('params', 'PaliGemma', 'img', 'Transformer', 'encoder_norm', 'bias', 'value')": {},
+            }
+        }))
+        self.official_config = SimpleNamespace(
+            model=SimpleNamespace(
+                pi05=True, paligemma_variant="gemma_2b", action_expert_variant="gemma_300m",
+                action_horizon=10, action_dim=32, max_token_len=48, discrete_state_input=False,
+            ),
+            checkpoint_dir=self.checkpoint.parent,
+        )
+        self.libero_official_builder.return_value = self.official_config
+        return self.checkpoint
 
     def fixture(self, policy_config="pi05_q5", *, with_record=True, checkpoint_path=None):
         is_q5 = policy_config == "pi05_q5"
@@ -220,6 +251,46 @@ class ServePolicyTests(unittest.TestCase):
                  self.assertRaises(SystemExit):
                 serve_policy.main()
             self.environment.assert_not_called()
+
+    def test_official_full_libero_checkpoint_selects_official_config_and_warmup(self):
+        checkpoint = self.official_fixture()
+        self.invoke(policy_config="pi05_libero", policy_dir=checkpoint)
+        self.libero_builder.assert_not_called()
+        self.libero_official_builder.assert_called_once_with(asset_id="physical-intelligence/libero")
+        self.create_policy.assert_called_once_with(self.official_config, checkpoint)
+        self.policy.infer.assert_called_once()
+        obs = self.policy.infer.call_args.args[0]
+        self.assertEqual(obs["observation/image"].shape, (224, 224, 3))
+        self.assertEqual(obs["observation/wrist_image"].shape, (224, 224, 3))
+        self.assertEqual(obs["observation/state"].shape, (8,))
+        identity = self.server.call_args.kwargs["metadata"]["pipeline"]
+        self.assertEqual(identity["variant"], "official")
+        self.assertEqual(identity["model"]["paligemma"], "gemma_2b")
+        self.assertIsNotNone(self.report.call_args.args[0]["warmup_seconds"])
+
+    def test_official_and_unfinished_checkpoint_layouts_validated(self):
+        checkpoint = self.official_fixture()
+        (checkpoint / "params/manifest.ocdbt").unlink()
+        with self.assertRaisesRegex(ValueError, "Missing finalized checkpoint"):
+            self.invoke(policy_config="pi05_libero", policy_dir=checkpoint)
+        self.create_policy.assert_not_called()
+
+        (checkpoint / "params/manifest.ocdbt").write_text("ocdbt")
+        (checkpoint / "train_state").mkdir()
+        with self.assertRaisesRegex(ValueError, "not finalized"):
+            self.invoke(policy_config="pi05_libero", policy_dir=checkpoint)
+        self.create_policy.assert_not_called()
+
+    def test_skip_warmup_and_common_memory_decoupling(self):
+        from pipeline.common import memory as common_memory
+        self.assertIs(serve_policy.add_memory_argument, common_memory.add_memory_argument)
+        self.assertIs(serve_policy.configure_memory_fraction, common_memory.configure_memory_fraction)
+
+        self.fixture("pi05_q5")
+        self.invoke("--skip-warmup")
+        self.policy.infer.assert_not_called()
+        self.assertIsNone(self.report.call_args.args[0]["warmup_seconds"])
+        self.server.return_value.serve_forever.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -5,11 +5,12 @@ import json
 import logging
 from pathlib import Path
 import sys
+import time
 
 from pipeline.common import runtime
+from pipeline.common.memory import add_memory_argument, configure_memory_fraction
 from pipeline.common.reporting import emit_report
 from pipeline.common.validation import experiment_name, gpu_selectors, require
-from pipeline.q5.memory import add_memory_argument, configure_memory_fraction
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 POLICY_CONFIGS = ("pi05_libero", "pi05_q5")
@@ -24,6 +25,34 @@ def resolve_checkpoint_dir(policy_dir, *, workspace=None):
         if candidate.exists():
             return candidate.resolve()
     return (root / raw).resolve()
+
+
+def verify_checkpoint_layout(checkpoint):
+    """Validate that a checkpoint directory is complete and finalized."""
+    require((checkpoint / "params").is_dir(), f"Missing finalized checkpoint: {checkpoint}")
+    checkpoint_metadata = checkpoint / "_CHECKPOINT_METADATA"
+    if checkpoint_metadata.is_file():
+        require(json.loads(checkpoint_metadata.read_text()).get("commit_timestamp_nsecs"),
+                f"Checkpoint is not finalized: {checkpoint}")
+        return
+    if (checkpoint / "train_state").exists():
+        raise ValueError(f"Checkpoint is not finalized: {checkpoint}")
+    require((checkpoint / "params/_METADATA").is_file() and (checkpoint / "params/manifest.ocdbt").is_file(),
+            f"Missing finalized checkpoint: {checkpoint}")
+
+
+def detect_libero_variant(checkpoint):
+    """Distinguish official full-parameter checkpoints from local LoRA checkpoints."""
+    params_metadata = checkpoint / "params/_METADATA"
+    if params_metadata.is_file():
+        tree_metadata = json.loads(params_metadata.read_text()).get("tree_metadata", {})
+        if tree_metadata:
+            return "lora" if any("lora" in key for key in tree_metadata) else "official"
+    official_stats = checkpoint / "assets/physical-intelligence/libero/norm_stats.json"
+    local_stats = checkpoint / "assets/libero/norm_stats.json"
+    if official_stats.is_file() and not local_stats.is_file():
+        return "official"
+    return "lora"
 
 
 def find_training_record(policy_config, checkpoint, *, workspace=None):
@@ -61,18 +90,66 @@ def build_policy_config(policy_config, checkpoint, *, workspace=None):
         model = dataclasses.asdict(config.model)
         asset_id = ASSET_ID
     else:
-        from pipeline.common.config import build_config, describe
+        from pipeline.common.config import build_config, build_official_config, describe, describe_model
         if original is not None:
             upstream = original.get("upstream_commit_expected")
             require(upstream == runtime.UPSTREAM_COMMIT,
                     f"Training record has an unsupported upstream commit: {upstream}")
-        batch_size = original["batch_size"] if original is not None else 16
-        config = build_config(profile=profile, exp_name=config_exp, batch_size=batch_size)
-        model = describe(config, profile)["model"]
-        asset_id = "libero"
+            batch_size = original["batch_size"]
+            config = build_config(profile=profile, exp_name=config_exp, batch_size=batch_size)
+            model = describe(config, profile)["model"]
+            asset_id = "libero"
+            params_metadata = checkpoint / "params/_METADATA"
+            if params_metadata.is_file() and json.loads(params_metadata.read_text()).get("tree_metadata"):
+                detected = detect_libero_variant(checkpoint)
+                recorded_model = original["model"]
+                expected_variant = ("lora" if "lora" in str(recorded_model.get("paligemma", ""))
+                                    or "lora" in str(recorded_model.get("action_expert", "")) else "official")
+                require(detected == expected_variant,
+                        f"Checkpoint variant ({detected}) differs from recorded training model ({expected_variant})")
+        else:
+            variant = detect_libero_variant(checkpoint)
+            if variant == "official":
+                official_stats = checkpoint / "assets/physical-intelligence/libero/norm_stats.json"
+                asset_id = "physical-intelligence/libero" if official_stats.is_file() else "libero"
+                config = build_official_config(asset_id=asset_id)
+                model = describe_model(config)
+            else:
+                config = build_config(profile=profile, exp_name=config_exp, batch_size=16)
+                model = describe(config, profile)["model"]
+                asset_id = "libero"
     if original is not None:
         require(model == original["model"], "Inference model differs from recorded training model")
     return config, model, asset_id, exp_name, step, original
+
+
+def make_warmup_observation(policy_config):
+    import numpy as np
+
+    if policy_config == "pi05_libero":
+        return {
+            "observation/state": np.zeros(8, dtype=np.float32),
+            "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "observation/wrist_image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "prompt": "warmup",
+        }
+    return {
+        "state": np.zeros(38, dtype=np.float32),
+        "images": {"image_head": np.zeros((224, 224, 3), dtype=np.uint8)},
+        "prompt": "warmup",
+    }
+
+
+def warmup_policy(policy, policy_config):
+    """Run one dummy inference before opening the WebSocket port to trigger JIT compilation."""
+    import numpy as np
+
+    started = time.monotonic()
+    result = policy.infer(make_warmup_observation(policy_config))
+    actions = np.asarray(result["actions"])
+    require(actions.size > 0 and bool(np.all(np.isfinite(actions))),
+            "Warmup inference returned empty or non-finite actions")
+    return round(time.monotonic() - started, 3)
 
 
 def main():
@@ -84,6 +161,8 @@ def main():
                         help="Checkpoint directory to load, aligned with upstream serve_policy")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="0.0.0.0", help="Listen address (default: 0.0.0.0)")
+    parser.add_argument("--skip-warmup", action="store_true",
+                        help="Skip dummy warmup inference before opening the WebSocket server")
     parser.add_argument("--output", type=Path, help="Optionally save the service record; otherwise print it only")
     add_memory_argument(parser)
     args = parser.parse_args()
@@ -101,15 +180,11 @@ def main():
         str(WORKSPACE / "openpi/packages/openpi-client/src"),
     ]
     checkpoint = resolve_checkpoint_dir(args.policy_dir, workspace=WORKSPACE)
+    verify_checkpoint_layout(checkpoint)
     config, model, asset_id, exp_name, step, original = build_policy_config(
         args.policy_config, checkpoint, workspace=WORKSPACE
     )
     runtime.require_tokenizer(WORKSPACE)
-    checkpoint_metadata = checkpoint / "_CHECKPOINT_METADATA"
-    require(checkpoint_metadata.is_file() and (checkpoint / "params").is_dir(),
-            f"Missing finalized checkpoint: {checkpoint}")
-    require(json.loads(checkpoint_metadata.read_text()).get("commit_timestamp_nsecs"),
-            f"Checkpoint is not finalized: {checkpoint}")
     stats_path = checkpoint / "assets" / asset_id / "norm_stats.json"
     require(stats_path.is_file(), f"Missing checkpoint normalization statistics: {stats_path}")
     stats_sha = runtime.sha256(stats_path)
@@ -122,8 +197,15 @@ def main():
 
     if jax.default_backend() != "gpu" or jax.device_count() != 1:
         raise RuntimeError("Expected one visible GPU for policy inference")
-    logging.info("Loading LoRA policy (%s) from %s with checkpoint-owned statistics", args.policy_config, checkpoint)
+    variant = detect_libero_variant(checkpoint) if original is None and args.policy_config == "pi05_libero" else None
+    label = f"{args.policy_config}/{variant}" if variant is not None else args.policy_config
+    logging.info("Loading policy (%s) from %s with checkpoint-owned statistics", label, checkpoint)
     policy = create_trained_policy(config, checkpoint)
+    warmup_seconds = None
+    if not args.skip_warmup:
+        logging.info("Running dummy warmup inference for %s...", label)
+        warmup_seconds = warmup_policy(policy, args.policy_config)
+        logging.info("Warmup inference completed in %.3fs", warmup_seconds)
     metadata = dict(policy.metadata)
     if original is not None:
         metadata["pipeline"] = {
@@ -132,13 +214,16 @@ def main():
             "norm_stats_sha256": stats_sha,
         }
     else:
-        metadata["pipeline"] = {
+        pipeline_meta = {
             "config": args.policy_config, "checkpoint_dir": str(checkpoint),
             "upstream_commit": runtime.UPSTREAM_COMMIT, "model": model,
             "norm_stats_sha256": stats_sha,
         }
+        if variant is not None:
+            pipeline_meta["variant"] = variant
+        metadata["pipeline"] = pipeline_meta
     emit_report({"config": args.policy_config, "checkpoint": str(checkpoint), "gpu": args.gpu,
-                 "host": args.host, "port": args.port,
+                 "host": args.host, "port": args.port, "warmup_seconds": warmup_seconds,
                  "metadata": metadata}, args.output)
     logging.info("Policy loaded; starting WebSocket server at %s:%s", args.host, args.port)
     WebsocketPolicyServer(policy, host=args.host, port=args.port, metadata=metadata).serve_forever()
