@@ -5,6 +5,7 @@ openpi_cache/
 # 运行产物（日志、评测结果、检查点）
 logs/
 runs/
+assets/
 checkpoints/
 checks/output/
 
